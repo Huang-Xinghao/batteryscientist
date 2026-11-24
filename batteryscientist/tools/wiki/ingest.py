@@ -537,6 +537,8 @@ class WikiIngestion:
                 if path.is_file()
                 else {"status": "needs_revision", "errors": [str(exc)]}
             )
+            if not path.is_file():
+                write_json(path, report)
             if path.is_file():
                 self.last_report = report
             self.last_review_hash = draft_hash

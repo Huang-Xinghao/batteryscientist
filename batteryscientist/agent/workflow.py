@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import math
 import logging
-from batteryscientist.tools.experiments.queue import run_queue
 from batteryscientist.tools.experiments.executor import ExperimentExecutor, AwaitingResults, receipt_matches_job, job_dependencies
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -17,12 +16,11 @@ from typing import Any, Callable, Iterable, Literal
 
 from .loop import ArtifactValidationError, PhaseAgent
 from .stages import NEXT_NODE
-from batteryscientist.tools import ToolContext, ToolResult, ToolSpec
 from batteryscientist.tools.experiments.plan import read_plan_blocks, write_experiment_tracker
 from batteryscientist.tools.paper_compile import compile_pdf
 
 
-WorkflowStatus = Literal["running", "awaiting_results", "awaiting_user", "completed", "failed"]
+WorkflowStatus = Literal["running", "awaiting_results", "awaiting_user", "completed", "partial", "failed"]
 PaperStatus = Literal["pending", "pdf_ready"]
 
 
@@ -149,7 +147,7 @@ class WorkflowRunner:
             state, instruction=instruction, approve_revision=approve_revision)
         if execution:
             state.node_results.setdefault(node, {})["execution"] = execution
-        if self.on_node_end and state.status in {"completed", "awaiting_user"}:
+        if self.on_node_end and state.status in {"completed", "awaiting_user", "partial"}:
             self.on_node_end(node, state, result)
         return state
 
@@ -177,10 +175,11 @@ class WorkflowRunner:
                 self._require_file(name)
             result.files = files
             selected_report = files[0] if files else None
-            selected_report = selected_report if state.mode == 'auto' and node in {'refine', 'experiment_plan'} else None
+            selected_report = (selected_report if state.mode == 'auto' and node in {'refine', 'experiment_plan'}
+                               and result.metadata.get('delivery_status') != 'partial' else None)
             selected_sha = (hashlib.sha256(self._require_file(selected_report).read_bytes()).hexdigest()
                             if selected_report else None)
-            if review_required:
+            if review_required and result.metadata.get('delivery_status') != 'partial':
                 checkpoint = {'summary': '阶段产物已生成，请审阅。',
                               'questions': []}
                 if not files:
@@ -228,6 +227,10 @@ class WorkflowRunner:
                 'sha256': selected_sha,
                 'timestamp': datetime.now(timezone.utc).isoformat(),
             })
+        if result.metadata.get('delivery_status') == 'partial':
+            state.status = 'partial'
+            state.error = result.metadata.get('remaining', '')
+            return state, result
         state.transitions += 1
         if node in {"paper_compile", "improvement"}:
             state.paper_status = "pdf_ready"
@@ -297,7 +300,9 @@ class WorkflowRunner:
     def _agent_node(self, prompt: str, phase: str, **metadata) -> NodeResult:
         result = self._go(prompt, phase=phase)
         files = list(getattr(result, 'files', []))
-        return NodeResult(files, {'phase': phase, 'iterations': result.iterations, **metadata},
+        return NodeResult(files, {'phase': phase, 'iterations': result.iterations,
+                                  'delivery_status': getattr(result, 'delivery_status', 'completed'),
+                                  'remaining': getattr(result, 'remaining', ''), **metadata},
                           getattr(result, 'final', ''))
 
     def start_from_project(self, node: str, prompt: str,
@@ -344,33 +349,12 @@ class WorkflowRunner:
 
     def _run_experiment_bridge(self, state: WorkflowState, prompt: str) -> NodeResult:
         """Own implementation, deployment, collection and plan reconciliation."""
-        completed_jobs = 0
-
-        def execute():
-            nonlocal completed_jobs
-            try:
-                manifest = self._experiment_manifest(state)
-                self.experiments.validate_inputs(manifest)
-                attempts = run_queue(self.experiments, state, manifest,
-                                     on_progress=self.on_node_progress)
-                completed_jobs = len(attempts)
-                return ToolResult(json.dumps({
-                    'status': 'completed', 'completed_jobs': len(attempts),
-                    'next': '读取实际结果并撰写 EXPERIMENT_RESULTS.md。',
-                }, ensure_ascii=False))
-            except (AwaitingResults, ValueError, RuntimeError, OSError) as exc:
-                return ToolResult(str(exc) + '；读取日志，修复后可以再次调用 run_experiments。'
-                                  '无法完成的任务应如实说明其影响和限制。', True)
-
-        def run_experiments(ctx: ToolContext) -> ToolResult:
-            """通过支持续跑的队列执行 manifest 任务，每块 GPU 同时只运行一个训练任务。工具等待执行完成；模型 HTTP 超时不限制实验任务时长。复用有效的已完成任务。"""
-            return execute()
-
-        self.agent.add_tool(ToolSpec(run_experiments.__name__, run_experiments.__doc__, run_experiments),
-                            phases=("experiment_bridge",))
+        completed_jobs = None
 
         def complete():
             nonlocal completed_jobs
+            if getattr(self.agent.last_state, 'delivery_status', 'completed') == 'partial':
+                return
             statuses = self._refresh_experiment_tracker(state, self._experiment_manifest(state))
             completed_jobs = sum(item['status'] == 'completed' for item in statuses.values())
 
@@ -379,6 +363,8 @@ class WorkflowRunner:
         return NodeResult(files, {
             'phase': 'experiment_bridge', 'iterations': result.iterations,
             'manifest': 'experiments/manifest.json', 'completed_jobs': completed_jobs,
+            'delivery_status': getattr(result, 'delivery_status', 'completed'),
+            'remaining': getattr(result, 'remaining', ''),
         }, getattr(result, 'final', ''))
 
 

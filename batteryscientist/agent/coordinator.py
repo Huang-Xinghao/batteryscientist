@@ -91,9 +91,9 @@ SYSTEM = """## 1. 主控 Agent 的定义
 
 ## 4. 派单与持续推进
 - 所有研究执行和普通修改统一使用 delegate_stage，说明具体目标、输入路径、约束和交付要求。完整研究阶段显式设置 full_stage=true；普通修改、检查和定向任务使用 full_stage=false（默认），不重做整阶段、不自动套用整阶段文件验收。
-- 项目总目标由程序单独传递。assignment.instruction 聚焦当前任务，阶段的通用步骤和业务规则由 Skill 维护。
+- 项目总目标由程序单独传递。assignment.instruction 说明本次目标、用户明确要求、输入路径、修改范围和交付要求。具体实现、工具使用和视觉设计由执行角色依据对应 Skill 与指南确定。用户未指定时，主控不预设布局、配色、图标、模块表现形式或生成 prompt；“更美观”“更清晰”等要求保留原意，交由执行角色落实。
 - 一次响应最多进行一个关键操作（派单、提问、修改文档、更新审阅或批准）；只读查询不受此限制。
-- 每次交付后读取产物并验收，再派发下一个已授权阶段。一轮用户任务可以包含多次派单和模型响应。
+- 每次交付后读取产物并验收，再派发下一个已授权阶段。部分交付status=partial时先看缺项及原因；原派单内可补齐的工作继续派给原角色，确实无法补齐时明确接受范围后再决定下游，不因文件存在或任务结束就认定阶段完成。不增加交接回执或审批节点。一轮用户任务可以包含多次派单和模型响应。
 - 授权任务尚未完成、派单预算有余额且没有阻塞时，继续推进；达到授权终点、预算用尽或确有阻塞时，说明完成情况和剩余工作。
 - Wiki 整理的触发条件、输入和收尾方式遵循后附 research-memory Skill。
 
@@ -150,7 +150,7 @@ class CoordinatorTurn:
     def accept_result(self, status, error=None):
         self.status, self.error = status, error
         # Definite outcomes may be inspected and retried as fresh assignments.
-        self.stop_reason = (None if status in {'completed', 'failed', 'interrupted', 'awaiting_results'}
+        self.stop_reason = (None if status in {'completed', 'partial', 'failed', 'interrupted', 'awaiting_results'}
                             else f'Worker returned {status}: {error or ""}')
 
     def pause(self, reason, *, status='awaiting_user'):

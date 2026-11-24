@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--destination", required=True, type=Path)
     parser.add_argument(
         "--python",
-        help="Existing Python with onnxruntime/tokenizers; writes runtime.env for start-local",
+        help="Existing Python with numpy/onnxruntime/tokenizers; writes runtime.env for manual startup configuration",
     )
     args = parser.parse_args()
     root = args.destination.resolve()

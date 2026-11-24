@@ -232,11 +232,13 @@ class ExperimentExecutor:
         if issues:
             raise ValueError(json.dumps({'issues': issues}, ensure_ascii=False))
 
-    def seconds_used(self) -> float:
+    def seconds_used(self, *, ignore_running=False) -> float:
         total = 0.0
         for path in (self.project / "experiment-runs").glob("*/status.json"):
             receipt = json.loads(path.read_text())
             if receipt.get("status") == "running":
+                if ignore_running:
+                    continue
                 raise AwaitingResults(f"Unfinished experiment receipt: {path}. Reconcile the interrupted job before resuming a budgeted run.")
             elapsed = receipt.get("elapsed_seconds")
             if elapsed is None:
@@ -247,19 +249,22 @@ class ExperimentExecutor:
             total += elapsed
         return total
 
-    def execute(self, job: dict[str, Any], *, resources=None, cancel_event=None) -> dict[str, Any]:
+    def execute(self, job: dict[str, Any], *, resources=None, cancel_event=None, budget_allocation=None) -> dict[str, Any]:
         resources = resources if resources is not None else self.resolve_resources(job)
         config = resources["requested"]
         timeout = job["timeout_seconds"]
         validate_job_timeout(self.project, job)
         if 'hpo_remaining_seconds' in config:
             timeout = min(timeout, config['hpo_remaining_seconds'])
-        used = self.seconds_used() if config["total_experiment_seconds"] is not None else 0.0
+        used = (budget_allocation[0] if budget_allocation is not None else
+                self.seconds_used() if config["total_experiment_seconds"] is not None else 0.0)
         if config["total_experiment_seconds"] is not None:
             remaining = config["total_experiment_seconds"] - used
             if remaining <= 0:
                 raise AwaitingResults("Project total_experiment_seconds exhausted; increase the user-owned budget to continue.")
             timeout = min(timeout, remaining)
+        if budget_allocation is not None:
+            timeout = min(timeout, budget_allocation[1])
         directory = self.project / "experiment-runs" / (job["id"] + "-" + uuid.uuid4().hex[:12])
         directory.mkdir(parents=True)
         # Preserve previous outputs, so stale metrics cannot count as this attempt.

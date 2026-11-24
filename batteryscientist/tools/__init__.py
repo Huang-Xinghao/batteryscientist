@@ -5,6 +5,7 @@ from . import literature as _literature
 from . import battery_resources as _battery_resources
 from . import experiment_template as _experiment_template
 from . import experiment_resources as _experiment_resources
+from .experiments import run as _experiment_run
 from . import laboratory as _laboratory
 from . import wiki as _wiki
 from . import figure_references as _figure_references

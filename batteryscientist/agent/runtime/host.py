@@ -112,7 +112,7 @@ def run_task(folder: Path):
             status = 'unknown'
             if state is not None:
                 status = ('blocked' if state.status in {'awaiting_user', 'awaiting_results'} else
-                          'idle' if state.status == 'completed' else 'unknown')
+                          'idle' if state.status in {'completed', 'partial'} else 'unknown')
             report(status, state)
     print(f"Result: {state.status}" + (f" — {state.error}" if state.error else ''), flush=True)
 

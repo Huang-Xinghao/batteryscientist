@@ -488,19 +488,19 @@ def create_run(project_id: str, body: RunCreate, *, message_prompt=None):
         body = body.model_copy(update={'action': 'coordinate'})
     reconcile()
     terminal_paths = terminal_projects()
-    registered_paths = {item["path"] for item in rows("SELECT path FROM projects")}
-    if terminal_paths & registered_paths:
+    if str(Path(project["path"]).resolve()) in terminal_paths:
         raise HTTPException(
-            409, "已有终端工作流正在运行，请等待完成或从原终端停止后再启动"
+            409, "当前项目已有终端工作流正在运行，请等待完成或从原终端停止后再启动"
         )
     identifier = uuid.uuid4().hex
     with connection() as db:
         db.execute("BEGIN IMMEDIATE")
-        # First release serializes web runs globally to avoid cross-project GPU contention.
+        # Serialize writes within a project; independent projects can run concurrently.
         if db.execute(
-            "SELECT 1 FROM runs WHERE status IN ('queued','running','stopping')"
+            "SELECT 1 FROM runs WHERE project_id=? AND status IN ('queued','running','stopping')",
+            (project_id,),
         ).fetchone():
-            raise HTTPException(409, "已有项目正在运行，请等待完成或先停止当前运行")
+            raise HTTPException(409, "当前项目已有任务正在运行，请等待完成或先停止当前运行")
         state = read_json(Path(project["path"]) / "workflow-state.json", {})
         options = body.model_dump(exclude_none=True)
         if body.action in {'start', 'resume', 'coordinate'}:

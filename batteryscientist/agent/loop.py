@@ -101,6 +101,8 @@ class AgentState:
     task_start_index: int = 1
     context_memory: dict | None = None
     files: list[str] = field(default_factory=list)
+    delivery_status: Literal["completed", "partial"] = "completed"
+    remaining: str = ""
 
     @property
     def task_messages(self) -> list[dict[str, Any]]:
@@ -458,7 +460,7 @@ class PhaseAgent(AgentLoop):
                     on_progress=lambda action, details: self._progress('wiki_progress', action=action, **details))
             selected += self.wiki_ingestion.tools()
         selected += (ToolSpec('submit_delivery',
-                              '登记本次交付的真实项目文件，files 按主产物在前排列。只列本次任务相关文件，不扩展到整个目录；后续修改或新增交付后重新登记。最终回答仍需说明结果与限制。',
+                              '登记本次交付的真实项目文件，files 按主产物在前排列。只列本次任务相关文件，不扩展到整个目录；后续修改或新增交付后重新登记。无法完成本次派单时用status=partial并简述remaining，不另写交接回执。最终回答仍需说明结果与限制。',
                               self._submit_delivery),)
         selected += (ToolSpec('request_user_decision',
                               '提问并等待回答；context_paths 填写本问题依赖的项目内文件相对路径，文件变化会使回答失效。自动模式仅限已查证的必要输入阻塞，必须填写blocking_reason。',
@@ -524,19 +526,28 @@ class PhaseAgent(AgentLoop):
             raise ValueError(f"交付文件不存在、为空或位于项目外：{name}")
         return path
 
-    def _submit_delivery(self, ctx, files: list[str]) -> ToolResult:
+    def _submit_delivery(self, ctx, files: list[str],
+                         status: Literal["completed", "partial"] = "completed", remaining: str = "") -> ToolResult:
         if self.last_state is None:
             raise ValueError("交付必须属于正在执行的任务")
+        if status not in {'completed', 'partial'}:
+            raise ValueError('status must be completed or partial')
+        if status == 'partial' and not remaining.strip():
+            raise ValueError('部分完成时请简述尚缺内容及原因')
         paths = [self._delivery_path(name).relative_to(self.project).as_posix() for name in files]
         self.last_state.files = list(dict.fromkeys(paths))
-        return ToolResult(json.dumps({'files': self.last_state.files}, ensure_ascii=False))
+        self.last_state.delivery_status = status
+        self.last_state.remaining = remaining.strip() if status == 'partial' else ''
+        return ToolResult(json.dumps({'files': self.last_state.files, 'status': status,
+                                      'remaining': self.last_state.remaining}, ensure_ascii=False))
 
     def _check_completion(self, phase: str) -> None:
         try:
             if phase == 'wiki':
                 self.wiki_ingestion.check_completion()
-            for name in self.required_outputs:
-                self._delivery_path(name)
+            if getattr(self.last_state, 'delivery_status', 'completed') != 'partial':
+                for name in self.required_outputs:
+                    self._delivery_path(name)
             if self.last_state is not None:
                 for name in self.last_state.files:
                     self._delivery_path(name)
@@ -553,10 +564,14 @@ class PhaseAgent(AgentLoop):
                   "每次工具调用解决一个当前未确定的问题；已有结果及产物未变化时复用。"
                   "失败先判断参数、环境或执行原因，修正后再调用，不原样重复；"
                   "只在源码或输入变化、前次失败或仍有未解决问题时重新生成、编译或查看同一产物。\n"
-                + "交付文件由本次任务决定，不为通过阶段检查创建无关文件。完成文件任务后用 submit_delivery 登记本次产物，主文件在前。\n"
+                + "交付文件由本次任务决定，不为通过阶段检查创建无关文件。完成文件任务后用 submit_delivery 登记本次产物，主文件在前。可修复的本次缺项继续完成；确实无法完成时用status=partial，并用remaining简述缺项及原因，不另建交接文件。\n"
                 + ("Wiki任务的write/edit只允许当前wiki_prepare返回的暂存目录中的draft*.json；"
                    "发布使用wiki_publish，交付回执由工具生成，不另写wiki-delivery.json。\n"
                    if self.phase == 'wiki' else "")
+                + ("实验结果报告保持为当前完整状态；更新前需要保留的旧版本移到refine-logs/archives，"
+                   "不要在同一报告追加互相矛盾的新旧状态。审阅修复情况简短补在现有CODE_REVIEW.md末尾，"
+                   "说明处理及验证依据；无须另写关闭清单，不以PASS作为机械完成条件。\n"
+                   if self.phase == 'experiment_bridge' else "")
                 + self._skill_prompt()
                 + ("\n本次是普通任务：Skill仅提供方法参考，不要求执行完整阶段。"
                    "以本次派单的目标、范围和交付要求为准，先读已有文件，再按需修改。"
@@ -628,7 +643,7 @@ class PhaseAgent(AgentLoop):
                     system_prompt=self._system_prompt(), phase=task.phase,
                     completion_check=completion_check, prepare_completion=prepare_completion, history=active.history)
                 status = ('failed' if task.phase == 'wiki' and self.wiki_ingestion.receipt.get('status') == 'failed'
-                          else 'completed')
+                          else result.delivery_status)
                 record.update(status=status, final=result.final)
                 if status == 'failed':
                     record['error'] = self.wiki_ingestion.receipt.get('error')

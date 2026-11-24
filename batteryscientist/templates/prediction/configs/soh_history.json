@@ -1,0 +1,20 @@
+{
+  "domain": "cell",
+  "adapter": "soh_sequence",
+  "dataset": "HUST",
+  "model": "SOHLinear",
+  "tasks": ["trajectory"],
+  "root_path": "./dataset",
+  "context": 64,
+  "horizon": 24,
+  "cycle_coordinate": "cycle_number",
+  "cycle_step": 1,
+  "aggregation": "cell_macro",
+  "selection_metric": "trajectory.rmse",
+  "sampling": "cell_balanced",
+  "batch_size": 128,
+  "train_epochs": 50,
+  "patience": 7,
+  "learning_rate": 0.001,
+  "seed": 2021
+}

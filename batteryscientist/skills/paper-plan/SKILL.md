@@ -58,6 +58,8 @@ battery_resources(action="read", resource_id="代码和绘图指南/论文写作
 
 列出每个图和表：
 
+按图的类型规划交付格式：数值结果图提供可重跑绘图脚本、矢量 PDF 和同版 PNG；生成式场景/架构图通过 `generate_image` 生成 PNG，论文需要 PDF 时可封装为 PDF。不要统一要求所有图矢量化，也不要把生成式架构图缺少矢量或可编辑版本列为缺陷。
+
 ```markdown
 ## 图计划
 

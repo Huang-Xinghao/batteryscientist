@@ -29,16 +29,26 @@ def prepare_experiment_template(
     dataset: str | None = None,
     data_path: str | None = None,
     destination: str = 'experiments/template',
+    adapter: Literal['cell_curves', 'soh_sequence', 'electrolyte'] | None = None,
+    split_file: str | None = None,
 ) -> ToolResult:
     """Copy editable prediction code and a selected task_config.json into the workspace.
 
     Call before implementing an experiment when no suitable project code exists.
-    cell tasks: life (default), soh, trajectory, rul; dataset defaults to Tongji and
-    uses BatteryLife fixed cell splits. electrolyte tasks: conductivity (default),
+    cell tasks: life (default), soh, trajectory, rul; the default curve adapter
+    uses Tongji and BatteryLife fixed cell splits. electrolyte tasks: conductivity (default),
     anion_ratio; dataset=bamboo_mixer. Its CompositionMLP is a baseline, not the
     Bamboo-mixer architecture. Missing observed labels fail when data is loaded.
     data_path references a dataset root or electrolyte JSON; discover/inspect it
     with battery_resources first. Omit it to leave ./dataset for later editing.
+    adapter=soh_sequence selects measured SOH histories -> future trajectories,
+    with SOHLinear as an editable baseline, 64/24 windows, cell-macro RMSE selection
+    and cell-balanced sampling. It needs no life labels or charge curves. For this
+    adapter choose tasks=[trajectory]. cell_curves preserves the IC2ML protocol.
+    split_file accepts train/val/test cell filenames, optionally under datasets[name],
+    or electrolyte row-index lists. Cell membership is copied into cell_splits.json;
+    comparisons share a protocol_file recording data/windows/evaluation conditions.
+    Relative paths resolve from the project workspace.
     destination must be a NEW workspace subdirectory; existing code is never
     overwritten. Returns cwd, editable entry points, argv and template fingerprint.
     Copies code/config/tests only; does not copy data/checkpoints, install packages
@@ -52,7 +62,15 @@ def prepare_experiment_template(
         if tasks is not None and (not isinstance(tasks, list) or not tasks
                                   or any(not isinstance(task, str) for task in tasks)):
             raise ValueError('tasks must be a nonempty list of task names')
-        selected = list(dict.fromkeys(DEFAULT_TASKS[domain] if tasks is None else tasks))
+        adapter = adapter or ('cell_curves' if domain == 'cell' else 'electrolyte')
+        if adapter not in ({'cell_curves', 'soh_sequence'} if domain == 'cell' else {'electrolyte'}):
+            raise ValueError('Adapter does not support the selected domain')
+        defaults = ('trajectory',) if adapter == 'soh_sequence' else DEFAULT_TASKS[domain]
+        selected = list(dict.fromkeys(defaults if tasks is None else tasks))
+        if adapter == 'soh_sequence' and selected != ['trajectory']:
+            raise ValueError('soh_sequence supports tasks=[trajectory]')
+        if split_file is not None and (not isinstance(split_file, str) or not split_file.strip()):
+            raise ValueError('split_file must be a nonempty path')
         if set(selected) - set(TASKS[domain]):
             raise ValueError(f'{domain} supports tasks {TASKS[domain]}')
         if not isinstance(destination, str) or not destination.strip():
@@ -73,17 +91,54 @@ def prepare_experiment_template(
             raise ValueError('data_path must be a nonempty dataset path')
         if dataset is not None and (not isinstance(dataset, str) or not dataset):
             raise ValueError('dataset must be a nonempty name')
-        dataset = dataset or ('Tongji' if domain == 'cell' else 'bamboo_mixer')
+        dataset = dataset or ('HUST' if adapter == 'soh_sequence' else
+                              'Tongji' if domain == 'cell' else 'bamboo_mixer')
         with ZipFile(BUNDLE) as archive:
             if domain == 'cell':
-                catalog = json.loads(archive.read('data_provider/batterylife_splits.json'))['splits']
-                if dataset not in set(catalog) | CELL_DATASETS:
+                catalog_record = json.loads(archive.read('data_provider/batterylife_splits.json'))
+                catalog = catalog_record['splits']
+                if dataset not in set(catalog) | CELL_DATASETS and not split_file:
                     raise ValueError(f'Unknown BatteryLife dataset {dataset!r}')
             elif dataset != 'bamboo_mixer':
                 raise ValueError('Electrolyte template supports dataset=bamboo_mixer')
-            preset = ('cell_multitask.json' if domain == 'cell' else 'electrolyte_conductivity.json')
+            preset = ('soh_history.json' if adapter == 'soh_sequence' else
+                      'cell_multitask.json' if domain == 'cell' else 'electrolyte_conductivity.json')
             config = json.loads(archive.read(f'configs/{preset}'))
-            config.update(domain=domain, tasks=selected, dataset=dataset)
+            config.update(domain=domain, adapter=adapter, tasks=selected, dataset=dataset)
+            split_snapshot = None
+            if domain == 'cell':
+                if split_file:
+                    source_path = (ctx.workspace / split_file).resolve()
+                    source_bytes = source_path.read_bytes()
+                    source = json.loads(source_bytes)
+                    membership = source['datasets'][dataset] if 'datasets' in source else source
+                    provenance = {'source': str(source_path),
+                                  'sha256': hashlib.sha256(source_bytes).hexdigest()}
+                else:
+                    source_name = 'Tongji' if dataset in CELL_DATASETS else dataset
+                    membership = catalog[source_name]
+                    if dataset in CELL_DATASETS:
+                        prefix = {'NCA': 'Tongji1_', 'NCM': 'Tongji2_', 'NCMNCA': 'Tongji3_'}[dataset]
+                        membership = {flag: [name for name in names if name.startswith(prefix)]
+                                      for flag, names in membership.items()}
+                    provenance = {key: value for key, value in catalog_record.items() if key != 'splits'}
+                if not isinstance(membership, dict) or set(membership) != {'train', 'val', 'test'}:
+                    raise ValueError('Cell splits require exactly train/val/test filename lists')
+                seen = set()
+                for flag, names in membership.items():
+                    if not isinstance(names, list) or not names:
+                        raise ValueError(f'No cells in {flag}; provide a scientifically justified split_file')
+                    for name in names:
+                        if not isinstance(name, str) or Path(name).name != name or not name.endswith('.pkl'):
+                            raise ValueError('Cell split members must be PKL filenames')
+                        if name in seen:
+                            raise ValueError(f'Duplicate cell or cell leakage: {name}')
+                        seen.add(name)
+                split_snapshot = {'datasets': {dataset: membership}, 'provenance': provenance}
+                config['split_file'] = str(target / 'cell_splits.json')
+                config['protocol_file'] = str(target / 'comparison_protocol.json')
+            elif split_file:
+                config['split_file'] = str((ctx.workspace / split_file).resolve())
             # Explicit relative paths refer to the agent workspace, not the copied cwd.
             config['root_path'] = str((ctx.workspace / data_path).resolve()) if data_path else './dataset'
             files = {}
@@ -101,10 +156,12 @@ def prepare_experiment_template(
             path = staging / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
+        if split_snapshot is not None:
+            (staging / 'cell_splits.json').write_text(json.dumps(split_snapshot, indent=2, ensure_ascii=False) + '\n')
         (staging / 'task_config.json').write_text(json.dumps(config, indent=2, ensure_ascii=False) + '\n')
         fingerprint = hashlib.sha256(BUNDLE.read_bytes()).hexdigest()
         receipt = {'template': 'template', 'template_sha256': fingerprint,
-                   'domain': domain, 'tasks': selected, 'dataset': dataset,
+                   'domain': domain, 'adapter': adapter, 'tasks': selected, 'dataset': dataset,
                    'files': {name: hashlib.sha256(content).hexdigest() for name, content in files.items()},
                    'configuration': 'task_config.json'}
         (staging / 'template_manifest.json').write_text(json.dumps(receipt, indent=2) + '\n')
@@ -116,11 +173,12 @@ def prepare_experiment_template(
         staging = None
         relative = target.relative_to(ctx.workspace.resolve()).as_posix()
         result = {'destination': relative, 'absolute_path': str(target), 'cwd': relative,
-                  'domain': domain, 'tasks': selected, 'dataset': dataset,
+                  'domain': domain, 'adapter': adapter, 'tasks': selected, 'dataset': dataset,
                   'model': config['model'], 'data_path': config['root_path'],
                   'config': f'{relative}/task_config.json',
                   'entry_points': [f'{relative}/{name}' for name in
-                                   ('run.py', 'exp/experiment.py', f'adapters/{domain}.py',
+                                   ('run.py', 'exp/experiment.py',
+                                    'adapters/soh_sequence.py' if adapter == 'soh_sequence' else f'adapters/{domain}.py',
                                     'models/registry.py')],
                   'train_argv': ['python', 'run.py', '--config', 'task_config.json', '--stage', 'train'],
                   'project_train_argv': ['python', f'{relative}/run.py', '--config',
@@ -136,9 +194,21 @@ def prepare_experiment_template(
                               'targets': 'targets.csv', 'predictions': 'predictions.csv',
                               'configuration': 'data_manifest.json'},
                   'metric_fields': [f'{task}.mae' for task in selected],
-                  'file_count': len(files) + 2, 'template_sha256': fingerprint,
+                  'split_file': config.get('split_file'),
+                  'split_counts': ({flag: len(names) for flag, names in membership.items()}
+                                   if domain == 'cell' else None),
+                  'protocol_file': config.get('protocol_file'),
+                  'baseline_models': (['SOHPersistence', 'SOHTrend', 'SOHLinear', 'SOHMLP', 'SOHTCN']
+                                      if adapter == 'soh_sequence' else [config['model']]),
+                  'guide': f'{relative}/README.md',
+                  'experiment_guide': f'{relative}/EXPERIMENT_GUIDE.md',
+                  'baseline_guide': f'{relative}/BASELINES.md',
+                  'file_count': len(files) + 2 + int(split_snapshot is not None), 'template_sha256': fingerprint,
                   'requires_data_path': data_path is None,
-                  'next_step': 'Read task_config.json and adapter/model code; implement the approved method. '
+                  'next_step': 'Read README.md, EXPERIMENT_GUIDE.md, BASELINES.md, task_config.json and the adapter/model code. '
+                               'Cell membership is snapshotted in cell_splits.json; all compared models share it. '
+                               'The first check freezes comparison_protocol.json; keep its evaluation population and units. '
+                               'Implement the approved method through the existing data/model/loss interfaces. '
                                'Use experiment_resources to inspect/configure the agreed compute policy and '
                                'prepare_template_run to create standard check/train jobs for run_experiments. '
                                'train_argv uses the returned cwd; project_train_argv runs from the project root '

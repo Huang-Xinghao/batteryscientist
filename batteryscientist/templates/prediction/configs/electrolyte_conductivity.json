@@ -1,0 +1,17 @@
+{
+  "domain": "electrolyte",
+  "dataset": "bamboo_mixer",
+  "model": "CompositionMLP",
+  "tasks": ["conductivity"],
+  "root_path": "/data/bamboo_mixer",
+  "hidden_dim": 128,
+  "fingerprint_dim": 128,
+  "batch_size": 128,
+  "train_epochs": 100,
+  "patience": 10,
+  "learning_rate": 0.001,
+  "val_fraction": 0.2,
+  "test_fraction": 0.2,
+  "split_seed": 2021,
+  "seed": 2021
+}

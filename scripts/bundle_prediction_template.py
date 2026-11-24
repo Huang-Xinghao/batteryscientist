@@ -6,7 +6,7 @@ from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
 
 def bundle(source: Path, output: Path):
-    files = [source / name for name in ('run.py', 'configuration.py', 'dataloader.py', 'requirements.txt')]
+    files = list(source.glob('*.py')) + list(source.glob('*.md')) + [source / 'requirements.txt']
     for folder in ('adapters', 'data_provider', 'models', 'exp', 'utils', 'layers', 'tests'):
         files.extend((source / folder).rglob('*.py'))
     files.extend((source / 'configs').glob('*.json'))

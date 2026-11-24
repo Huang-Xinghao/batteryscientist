@@ -234,10 +234,11 @@ def execute_stage(project: Path, node: str, instruction: str, *, role: str, proj
                 declared = list(getattr(agent.last_state, 'files', []))
                 pending = (refresh_revision_checkpoint(project, node, project_goal, files=declared)
                            if before != after or any(name not in watched for name in declared) else False)
-            status = 'awaiting_user' if pending else 'completed'
+            status = ('partial' if result.delivery_status == 'partial' else
+                      'awaiting_user' if pending else 'completed')
             progress['status'] = status
             event('workflow_end', node=node, status=status)
-            return SimpleNamespace(status=status, error=None, final=result.final,
+            return SimpleNamespace(status=status, error=result.remaining or None, final=result.final,
                                    files=list(dict.fromkeys([*result.files, *files])))
         except BaseException as exc:
             progress['status'] = 'interrupted' if isinstance(exc, (KeyboardInterrupt, SystemExit)) else 'failed'

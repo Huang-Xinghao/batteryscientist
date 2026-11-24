@@ -89,9 +89,9 @@ def _schedule(executor, state, manifest, on_progress, *, track=True, queue_path=
     config = load_execution_config(executor.project)
     compute = load_compute_config(executor.project)
     configured_ids = config['gpu_ids']
-    # Existing total budget counts cumulative job seconds. Keep it exact by serializing
-    # budgeted attempts rather than letting simultaneous jobs overspend a shared limit.
-    budgeted = compute['total_experiment_seconds'] is not None or getattr(executor, 'serial_budget', False)
+    # Reserve each active job's timeout; release unused seconds after completion.
+    total_budget = compute['total_experiment_seconds']
+    reservations = {}
     prior = [r for r in recover_receipts(executor) if r.get('status') == 'completed']
     if compute['total_experiment_seconds'] is not None:
         executor.seconds_used()
@@ -151,7 +151,7 @@ def _schedule(executor, state, manifest, on_progress, *, track=True, queue_path=
         snapshot = dict(
             status='failed' if failure else 'running' if pending or running else 'completed',
             error=str(failure) if failure else None, available_gpu_ids=allowed,
-            max_parallel_gpu_jobs=gpu_limit, budget_serialized=budgeted,
+            max_parallel_gpu_jobs=gpu_limit, budget_serialized=False,
             jobs=[dict(id=j['id'], block_id=j.get('block_id') or j['id'], depends_on=dependencies[j['id']],
                        status='completed' if j['id'] in completed else 'running' if j['id'] in active else
                        'artifact_invalid' if j['id'] in artifact_failures else
@@ -177,6 +177,7 @@ def _schedule(executor, state, manifest, on_progress, *, track=True, queue_path=
                         if not future.done():
                             continue
                         job, gpu = running.pop(future)
+                        reservations.pop(future, None)
                         if gpu in gpu_locks:
                             gpu_locks.pop(gpu).close()
                         try:
@@ -206,8 +207,17 @@ def _schedule(executor, state, manifest, on_progress, *, track=True, queue_path=
                         free = [i for i in allowed if i not in occupied and i in devices
                                 and devices[i]['memory_used_mib'] < config['gpu_idle_memory_threshold_mib']]
                         for job in ready:
-                            if budgeted and running:
-                                break
+                            allocation = None
+                            if total_budget is not None:
+                                used = executor.seconds_used(ignore_running=True)
+                                remaining = total_budget - used - sum(reservations.values())
+                                if remaining <= 0:
+                                    if running:
+                                        break
+                                    failure = AwaitingResults('Project total_experiment_seconds exhausted; increase the user-owned budget to continue.')
+                                    failures[job['id']] = str(failure)
+                                    break
+                                allocation = (used, min(job['timeout_seconds'], remaining))
                             try:
                                 resources = executor.resolve_resources(job)
                             except Exception as exc:
@@ -241,7 +251,12 @@ def _schedule(executor, state, manifest, on_progress, *, track=True, queue_path=
                                 resources = resources | dict(gpu_index=gpu, cuda_visible_device=devices[gpu]['token'])
                             elif any(g is None for _, g in running.values()):
                                 continue  # One CPU/MPS job at a time.
-                            future = pool.submit(executor.execute, job, resources=resources, cancel_event=cancel)
+                            kwargs = dict(resources=resources, cancel_event=cancel)
+                            if allocation is not None:
+                                kwargs['budget_allocation'] = allocation
+                            future = pool.submit(executor.execute, job, **kwargs)
+                            if allocation is not None:
+                                reservations[future] = allocation[1]
                             running[future] = (job, gpu)
                             del pending[job['id']]
                             checkpoint()

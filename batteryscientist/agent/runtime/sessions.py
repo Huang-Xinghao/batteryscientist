@@ -103,6 +103,8 @@ class RoleSession:
         data['context_memory'] = state.context_memory
         task['iterations'] = state.iterations
         task['files'] = list(state.files)
+        task['delivery_status'] = getattr(state, 'delivery_status', 'completed')
+        task['remaining'] = getattr(state, 'remaining', '')
         self.save(data)
 
     @contextmanager

@@ -26,14 +26,14 @@ PHASE_TOOL_NAMES: dict[str, frozenset[str]] = {
                                    "battery_resources", "inspect_compute"}),
     "experiment_bridge": frozenset({"find", "read", "grep", "write", "edit", "bash", "skill", "skill_resource_read", "sleep", "review_code",
                               "search_wiki", "read_wiki", "battery_resources", "prepare_experiment_template",
-                              "prepare_template_run", "experiment_resources", "inspect_compute"}),
+                              "prepare_template_run", "experiment_resources", "inspect_compute", "run_experiments"}),
     "paper_plan": frozenset({"find", "read", "grep", "write", "edit", "skill", "skill_resource_read", "search_wiki", "read_wiki", "search_papers", "battery_resources"}),
     "paper_figure": frozenset({"find", "read", "grep", "write", "edit", "bash", "skill", "skill_resource_read", "search_wiki", "read_wiki", "generate_image"}),
     "paper_write": frozenset({"find", "read", "grep", "write", "edit", "bash", "skill", "skill_resource_read", "search_wiki", "read_wiki", "search_papers", "battery_resources"}),
     "paper_compile": frozenset({"find", "read", "grep", "write", "edit", "bash", "skill", "skill_resource_read", "search_wiki", "read_wiki", "search_papers"}),
 }
 
-PHASE_TOOL_NAMES["improvement"] = (PHASE_TOOL_NAMES["paper_write"] - frozenset({"battery_resources"})) | frozenset({"read_paper_pages"})
+PHASE_TOOL_NAMES["improvement"] = (PHASE_TOOL_NAMES["paper_write"] - frozenset({"battery_resources"})) | frozenset({"read_paper_pages", "generate_image"})
 
 for _phase in ("experiment_plan", "experiment_bridge"):
     PHASE_TOOL_NAMES[_phase] |= frozenset({"laboratory_sources", "laboratory_snapshot"})

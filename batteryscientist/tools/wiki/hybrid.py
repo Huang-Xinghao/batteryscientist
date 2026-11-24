@@ -113,9 +113,7 @@ def encode_texts(
             source.write_text(
                 _json({"texts": list(missing.values())}), encoding="utf-8"
             )
-            worker = (
-                Path(__file__).resolve().parents[3] / "scripts/wiki_embedding_worker.py"
-            )
+            worker = Path(__file__).with_name("embedding_worker.py")
             process = subprocess.run(
                 [
                     python,

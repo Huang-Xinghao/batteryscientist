@@ -588,7 +588,10 @@ def validate_knowledge_prose(
             else re.escape(name)
         )
         if any(
-            re.search(pattern, text, re.I)
+            # Source alias spelling distinguishes names such as Add/Patch from
+            # ordinary prose such as "add value" or "patch representations".
+            # Independent evidence review handles contextual naming ambiguity.
+            re.search(pattern, text)
             for text in [
                 *prose,
                 *(t.get("description", "") for t in terms if isinstance(t, dict)),
