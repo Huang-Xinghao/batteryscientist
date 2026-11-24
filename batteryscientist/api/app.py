@@ -903,6 +903,9 @@ async def events(
     async def stream():
         nonlocal cursor
         heartbeat = 0
+        # Send bytes at once so proxies flush the headers and the browser reports
+        # the stream open now, not at the first heartbeat 15 seconds later.
+        yield ": connected\n\n"
         while not await request.is_disconnected():
             if heartbeat % 15 == 0 and not await asyncio.to_thread(auth.authenticated, request):
                 break

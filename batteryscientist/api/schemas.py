@@ -207,7 +207,7 @@ class LibraryDocumentView(LibraryEntryView):
 
 class GraphNodeView(LibraryEntryView):
     id: str
-    tags: list[str] = Field(default_factory=list)
+    tags: list[str]
 
 
 class GraphEdgeView(BaseModel):
@@ -254,13 +254,13 @@ class ReviewImpactView(BaseModel):
     kind: Literal["direct", "related"]
     title: str
     detail: str
-    sectionIds: list[str] = Field(default_factory=list)
+    sectionIds: list[str]
 
 
 class ReviewQuestionView(BaseModel):
     id: str
     question: str
-    sectionIds: list[str] = Field(default_factory=list)
+    sectionIds: list[str]
 
 
 class RevisionDiffView(BaseModel):
@@ -272,12 +272,13 @@ class RevisionDiffView(BaseModel):
 
 
 class RevisionView(BaseModel):
-    id: str | None = None
-    summary: str | None = None
-    impacts: list[ReviewImpactView] | None = None
-    questions: list[ReviewQuestionView] | None = None
-    diff: list[RevisionDiffView] | None = None
-    createdAt: str | None = None
+    # Written together by api/proposal_revision.py; only approval fields come later.
+    id: str
+    summary: str
+    impacts: list[ReviewImpactView]
+    questions: list[ReviewQuestionView]
+    diff: list[RevisionDiffView]
+    createdAt: str
     approvedAt: str | None = None
     formalHash: str | None = None
     frozenPath: str | None = None
