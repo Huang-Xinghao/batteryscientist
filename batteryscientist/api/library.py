@@ -9,6 +9,12 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from .schemas import (
+    LibraryDocumentView,
+    LibraryFiguresView,
+    LibraryIndexView,
+    ParadigmGraphView,
+)
 from .store import REPO
 from batteryscientist.tools.wiki import resolve_wiki_root
 from batteryscientist.tools.wiki.storage import corpus_roots, entity_paths, resolve_legacy_path
@@ -37,7 +43,7 @@ def document(path, relative):
             "excerpt": excerpt, "modified": path.stat().st_mtime}, body
 
 
-@router.get("/{library}")
+@router.get("/{library}", response_model=LibraryIndexView)
 def list_library(library: Library, q: str = Query("", max_length=200),
                  category: str = Query("", max_length=100), limit: int = Query(1000, ge=1, le=1000)):
     root = library_root(library)
@@ -87,7 +93,7 @@ def public_path(library, relative, suffixes):
     return resolved
 
 
-@router.get("/{library}/document")
+@router.get("/{library}/document", response_model=LibraryDocumentView)
 def read_document(library: Library, path: str = Query(max_length=1000)):
     target = public_path(library, path, {".md"})
     if target.stat().st_size > MAX_TEXT:
@@ -102,7 +108,7 @@ def read_asset(library: Library, path: str = Query(max_length=1000)):
     return FileResponse(target, media_type=mimetypes.guess_type(target.name)[0] or "application/octet-stream")
 
 
-@router.get('/paradigms/graph')
+@router.get('/paradigms/graph', response_model=ParadigmGraphView)
 def paradigm_graph():
     """Expose recorded wiki relationships, never infer scientific links from labels."""
     import json
@@ -163,7 +169,7 @@ def paradigm_graph():
             'truncated': catalog['truncated']}
 
 
-@router.get('/paradigms/figures')
+@router.get('/paradigms/figures', response_model=LibraryFiguresView)
 def paradigm_figures():
     """Read archived figure images and their original caption sidecars."""
     root = library_root('paradigms')

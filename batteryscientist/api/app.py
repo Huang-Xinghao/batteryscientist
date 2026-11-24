@@ -8,6 +8,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -20,7 +22,20 @@ from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .schemas import HealthView, ProjectView, QuestionView, QuestionAnswer
+from .schemas import (
+    ActivityPageView,
+    AnswerAccepted,
+    FileContentView,
+    FileListView,
+    HealthView,
+    LogView,
+    MessageBusy,
+    ProjectView,
+    QuestionAnswer,
+    QuestionView,
+    RunAccepted,
+    StopAccepted,
+)
 from . import auth
 from .library import router as library_router
 from .idea_canvas import router as idea_canvas_router
@@ -310,7 +325,26 @@ def checkpoint_token(project, state):
     ).hexdigest()
 
 
-def terminal_projects():
+# Status views poll every few seconds; walking every process on a shared GPU
+# server each time is wasteful, so their scans are reused for a short while.
+TERMINAL_SCAN_TTL = 5.0
+_terminal_cache: tuple[float, frozenset[str]] | None = None
+_terminal_lock = threading.Lock()
+
+
+def terminal_projects(*, fresh: bool = False) -> frozenset[str]:
+    """Project paths owned by CLI runs; cached briefly unless ``fresh`` is requested."""
+    global _terminal_cache
+    with _terminal_lock:
+        cached = _terminal_cache
+        if not fresh and cached and time.monotonic() - cached[0] < TERMINAL_SCAN_TTL:
+            return cached[1]
+        paths = scan_terminal_projects()
+        _terminal_cache = (time.monotonic(), paths)
+        return paths
+
+
+def scan_terminal_projects() -> frozenset[str]:
     """Recognize CLI-owned runs without taking ownership of their processes."""
     paths = set()
     for process in psutil.process_iter(["pid", "cmdline"]):
@@ -339,7 +373,7 @@ def terminal_projects():
                     paths.add(str(path.resolve()))
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
             continue
-    return paths
+    return frozenset(paths)
 
 
 def detail(project, terminal_paths=None):
@@ -450,7 +484,7 @@ def get_project(project_id: str):
     return detail(project_record(project_id))
 
 
-@app.post("/api/projects/{project_id}/runs", status_code=202)
+@app.post("/api/projects/{project_id}/runs", status_code=202, response_model=RunAccepted)
 def start_run(project_id: str, body: RunCreate):
     return create_run(project_id, body)
 
@@ -461,7 +495,11 @@ class MessageCreate(BaseModel):
     model: str | None = Field(default=None, max_length=200)
 
 
-@app.post("/api/projects/{project_id}/messages")
+@app.post(
+    "/api/projects/{project_id}/messages",
+    response_model=MessageBusy,
+    responses={202: {"model": RunAccepted, "description": "Message accepted as a coordinator run"}},
+)
 def send_message(project_id: str, body: MessageCreate):
     if not body.prompt.strip():
         raise HTTPException(400, "请输入消息")
@@ -487,7 +525,8 @@ def create_run(project_id: str, body: RunCreate, *, message_prompt=None):
     if body.action == 'start' and not body.start_node and not body.stop_after:
         body = body.model_copy(update={'action': 'coordinate'})
     reconcile()
-    terminal_paths = terminal_projects()
+    # Starting a run must see the current processes, never a cached view.
+    terminal_paths = terminal_projects(fresh=True)
     if str(Path(project["path"]).resolve()) in terminal_paths:
         raise HTTPException(
             409, "当前项目已有终端工作流正在运行，请等待完成或从原终端停止后再启动"
@@ -628,7 +667,7 @@ def list_questions(project_id: str):
     return UserQuestions(project_record(project_id)['path']).pending()
 
 
-@app.post("/api/projects/{project_id}/questions/{question_id}/answer")
+@app.post("/api/projects/{project_id}/questions/{question_id}/answer", response_model=AnswerAccepted)
 def answer_question(project_id: str, question_id: str, body: QuestionAnswer):
     from batteryscientist.agent.runtime.questions import UserQuestions
     reconcile()
@@ -655,7 +694,7 @@ def answer_question(project_id: str, question_id: str, body: QuestionAnswer):
     return {'status': 'answered', 'question_id': question_id, 'task_id': value['task_id']}
 
 
-@app.post("/api/projects/{project_id}/stop", status_code=202)
+@app.post("/api/projects/{project_id}/stop", status_code=202, response_model=StopAccepted)
 def stop_run(project_id: str):
     from batteryscientist.agent.runtime.execution import ExecutionOwner
     project = project_record(project_id)
@@ -676,7 +715,7 @@ def stop_run(project_id: str):
     return {'status': 'stopping'}
 
 
-@app.get("/api/projects/{project_id}/files")
+@app.get("/api/projects/{project_id}/files", response_model=FileListView)
 def list_files(project_id: str):
     project = project_record(project_id)
     root = Path(project["path"])
@@ -708,7 +747,7 @@ def list_files(project_id: str):
     return {"files": result, "truncated": False}
 
 
-@app.get("/api/projects/{project_id}/file")
+@app.get("/api/projects/{project_id}/file", response_model=FileContentView, response_model_exclude_none=True)
 def read_file(project_id: str, path: str):
     target = file_path(project_record(project_id), path)
     if target.suffix.lower() in {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".svg"}:
@@ -743,7 +782,7 @@ def download(project_id: str, path: str):
     )
 
 
-@app.put("/api/projects/{project_id}/file")
+@app.put("/api/projects/{project_id}/file", response_model=FileContentView, response_model_exclude_none=True)
 def edit_file(project_id: str, path: str, body: FileEdit):
     import fcntl
 
@@ -792,7 +831,7 @@ def edit_file(project_id: str, path: str, body: FileEdit):
     return read_file(project_id, path)
 
 
-@app.get("/api/projects/{project_id}/log")
+@app.get("/api/projects/{project_id}/log", response_model=LogView)
 def log_tail(project_id: str):
     project_record(project_id)
     latest = rows(
@@ -810,7 +849,7 @@ def log_tail(project_id: str):
     return {"content": content}
 
 
-@app.get("/api/projects/{project_id}/activity")
+@app.get("/api/projects/{project_id}/activity", response_model=ActivityPageView)
 def activity(
     project_id: str,
     role: str | None = Query(default=None),

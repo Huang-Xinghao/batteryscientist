@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from batteryscientist.proposal_review import CanvasDraft, review_status
 
+from .schemas import CanvasView, ProposalOverviewView
 from .store import connection, event, rows, now
 
 router = APIRouter(prefix="/api/projects")
@@ -17,7 +18,7 @@ PROPOSAL = "refine-logs/FINAL_PROPOSAL.md"
 CANVAS = "IDEA_CANVAS.json"
 
 
-@router.get('/{project_id}/proposal-overview')
+@router.get('/{project_id}/proposal-overview', response_model=ProposalOverviewView)
 def read_proposal_overview(project_id: str):
     from batteryscientist.proposal_view import model_overview
     _, proposal, _ = paths(project_id)
@@ -36,7 +37,7 @@ class CanvasApply(BaseModel):
     sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
 
 
-@router.post('/{project_id}/idea-canvas/apply')
+@router.post('/{project_id}/idea-canvas/apply', response_model=CanvasView)
 def apply_canvas(project_id: str, body: CanvasApply):
     """Adopt a reviewed automatic-mode design without starting downstream work."""
     import fcntl
@@ -77,7 +78,7 @@ def paths(project_id):
     return project, proposal, target
 
 
-@router.get("/{project_id}/idea-canvas")
+@router.get("/{project_id}/idea-canvas", response_model=CanvasView)
 def read_canvas(project_id: str):
     from .app import digest
 
@@ -114,7 +115,7 @@ def read_canvas(project_id: str):
     }
 
 
-@router.put("/{project_id}/idea-canvas")
+@router.put("/{project_id}/idea-canvas", response_model=CanvasView)
 def save_canvas(project_id: str, body: CanvasSave):
     import fcntl
     from .app import digest

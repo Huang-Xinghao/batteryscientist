@@ -11,6 +11,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from .schemas import AuthResult, SessionView
 from .store import connection
 
 router = APIRouter(prefix="/api/auth")
@@ -52,12 +53,12 @@ class Login(BaseModel):
     password: str = Field(max_length=1024)
 
 
-@router.get("/session")
+@router.get("/session", response_model=SessionView)
 def session(request: Request):
     return {"enabled": enabled(), "authenticated": authenticated(request)}
 
 
-@router.post("/login")
+@router.post("/login", response_model=AuthResult)
 async def login(body: Login, response: Response):
     if not enabled():
         raise HTTPException(404, "登录尚未配置")
@@ -84,7 +85,7 @@ async def login(body: Login, response: Response):
     return {"authenticated": True}
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=AuthResult)
 def logout(request: Request, response: Response):
     token = request.cookies.get(COOKIE, "")
     with connection() as db:
