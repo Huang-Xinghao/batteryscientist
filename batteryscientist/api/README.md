@@ -24,3 +24,10 @@ FastAPI 服务层，供 `batteryscientist-web` 前端使用。启动：`./run-we
 
 - 判断项目是否由终端命令行运行，需要遍历本机进程（`terminal_projects()`）。状态接口会被前端频繁读取，所以扫描结果缓存 5 秒（`TERMINAL_SCAN_TTL`）；启动运行前的冲突检查始终重新扫描（`fresh=True`）。
 - `/api/projects/{id}/events` 建立连接后立即发送一行注释，让代理马上转发响应头、浏览器马上确认连接；之后每约 15 秒发送一次心跳。前端据此在连接正常时停止定时轮询。
+
+## 方案审阅草稿
+
+旧版方案审阅页会在项目里留下 `refine-logs/IDEA_CANVAS.json`（草稿）和 `IDEA_REVIEW.json`（修订记录）。草稿里有未处理的修改时，`require_resolved_proposal_review()` 会拒绝在研究精炼检查点直接批准方案。
+
+- `GET /api/projects/{id}/proposal-overview` 的 `pendingReview` 字段说明是否有这样的草稿（修改条数、改过的章节、是否有修改意见或修订记录、是否无法读取），前端据此提示用户；判断逻辑与拦截共用 `pending_proposal_review()`。
+- `POST /api/projects/{id}/idea-canvas/archive` 把草稿和修订记录移到 `refine-logs/archive/idea-review-<时间>/`，不删除；运行期间不可调用，成功后记录 `proposal_review_archived` 事件。
