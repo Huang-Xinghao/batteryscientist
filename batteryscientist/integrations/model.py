@@ -86,6 +86,9 @@ class ModelResponse:
     content: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     raw: Any = None
+    # Thinking text the provider returned alongside the answer, if any. It is
+    # shown to the user but never sent back to the model as conversation.
+    reasoning: str = ""
 
 
 class InvalidToolCall(ValueError):
@@ -96,11 +99,59 @@ class OutputLimitExceeded(RuntimeError):
     """The response reached its output limit; partial tool calls must not run."""
 
 
-def _stream_response(stream: Any, *, deadline: float | None = None, on_usage=None, on_delta=None) -> ModelResponse:
+REASONING_FIELDS = ("reasoning_content", "reasoning")
+
+
+def _reasoning_text(part: Any) -> str:
+    """Thinking text in an OpenAI-compatible delta or message.
+
+    Providers that expose model thinking (DeepSeek, Qwen, vLLM, OpenRouter and
+    others) put it in ``reasoning_content`` or ``reasoning``; the OpenAI SDK keeps
+    such vendor fields in ``model_extra``. Other providers simply send none.
+    """
+    if part is None:
+        return ""
+    sources = [part] if isinstance(part, Mapping) else [
+        getattr(part, "model_extra", None) or {}, part.__dict__ if hasattr(part, "__dict__") else {}]
+    for source in sources:
+        for field in REASONING_FIELDS:
+            value = source.get(field) if isinstance(source, Mapping) else None
+            if isinstance(value, str) and value:
+                return value
+        details = source.get("reasoning_details") if isinstance(source, Mapping) else None
+        if isinstance(details, list):
+            text = "".join(str(item.get("text") or "") for item in details if isinstance(item, Mapping))
+            if text:
+                return text
+    return ""
+
+
+class _DeltaBuffer:
+    """Coalesces streamed text into ~50 ms / 96 character callbacks."""
+
+    def __init__(self, callback):
+        self.callback, self.pending, self.last = callback, [], time.monotonic()
+
+    def add(self, text: str):
+        if not self.callback:
+            return
+        self.pending.append(text)
+        if time.monotonic() - self.last >= .05 or sum(map(len, self.pending)) >= 96:
+            self.flush()
+
+    def flush(self):
+        if self.callback and self.pending:
+            self.callback(''.join(self.pending))
+        self.pending.clear()
+        self.last = time.monotonic()
+
+
+def _stream_response(stream: Any, *, deadline: float | None = None, on_usage=None, on_delta=None,
+                     on_reasoning=None) -> ModelResponse:
     """Assemble deltas before exposing any tool call to the execution loop."""
-    content, calls = [], {}
+    content, calls, reasoning = [], {}, []
     finished = False
-    pending, last_flush = [], time.monotonic()
+    answer, thinking = _DeltaBuffer(on_delta), _DeltaBuffer(on_reasoning)
     try:
         for chunk in stream:
             if on_usage and getattr(chunk, 'usage', None) is not None:
@@ -111,14 +162,15 @@ def _stream_response(stream: Any, *, deadline: float | None = None, on_usage=Non
                 if choice.index != 0:
                     continue
                 delta = choice.delta
+                thought = _reasoning_text(delta)
+                if thought:
+                    reasoning.append(thought)
+                    thinking.add(thought)
                 if delta.content:
+                    # Thinking precedes the answer; show it in full before answer text.
+                    thinking.flush()
                     content.append(delta.content)
-                    if on_delta:
-                        pending.append(delta.content)
-                        if time.monotonic() - last_flush >= .05 or sum(map(len, pending)) >= 96:
-                            on_delta(''.join(pending))
-                            pending.clear()
-                            last_flush = time.monotonic()
+                    answer.add(delta.content)
                 for call in delta.tool_calls or ():
                     item = calls.setdefault(call.index, {
                         "id": "", "function": {"name": "", "arguments": ""}})
@@ -137,13 +189,14 @@ def _stream_response(stream: Any, *, deadline: float | None = None, on_usage=Non
             raise RuntimeError("Model stream ended without a completion marker; no tools were executed")
         try:
             return _normalise_response({"content": "".join(content),
-                                        "tool_calls": [calls[i] for i in sorted(calls)]})
+                                        "tool_calls": [calls[i] for i in sorted(calls)],
+                                        "reasoning": "".join(reasoning)})
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             raise InvalidToolCall(f"Invalid streamed tool call: {exc}") from exc
     finally:
         try:
-            if pending and on_delta:
-                on_delta(''.join(pending))
+            thinking.flush()
+            answer.flush()
         finally:
             stream.close()
 
@@ -185,7 +238,8 @@ def _normalise_response(value: Any) -> ModelResponse:
                 arguments = json.loads(arguments)
             calls.append(ToolCall(str(call.get("id", f"call-{index}")),
                                   function["name"], dict(arguments)))
-        return ModelResponse(str(value.get("content", "") or ""), tuple(calls), value)
+        return ModelResponse(str(value.get("content", "") or ""), tuple(calls), value,
+                             str(value.get("reasoning") or value.get("reasoning_content") or ""))
     # This also handles an OpenAI ChatCompletion-like object without importing SDKs.
     choice = getattr(value, "choices", [None])[0]
     if getattr(choice, "finish_reason", None) == "length":
@@ -203,7 +257,8 @@ def _normalise_response(value: Any) -> ModelResponse:
             arguments = json.loads(arguments)
         calls.append(ToolCall(str(getattr(call, "id", f"call-{index}")),
                               function.name, dict(arguments)))
-    return ModelResponse(getattr(message, "content", "") or "", tuple(calls), value)
+    return ModelResponse(getattr(message, "content", "") or "", tuple(calls), value,
+                         _reasoning_text(message))
 
 
 class ModelClient:
@@ -242,7 +297,8 @@ class ModelClient:
             client = OpenAI(api_key=api_key, base_url=base_url, timeout=self.timeout, max_retries=0)
         self.client = client
 
-    def _request_response(self, request: dict[str, Any], *, on_delta=None, on_stream_reset=None, retry=True) -> ModelResponse:
+    def _request_response(self, request: dict[str, Any], *, on_delta=None, on_stream_reset=None, retry=True,
+                          on_reasoning=None) -> ModelResponse:
         """Retry the same model request; partial streams never reach tool execution."""
         deadline = None
         last_error = None
@@ -263,9 +319,12 @@ class ModelClient:
                     on_stream_reset()
                 response = self.client.chat.completions.create(**options)
                 if options["stream"] and not isinstance(response, Mapping) and not hasattr(response, "choices"):
-                    return _stream_response(response, deadline=deadline, on_usage=capture, on_delta=on_delta)
+                    return _stream_response(response, deadline=deadline, on_usage=capture, on_delta=on_delta,
+                                            on_reasoning=on_reasoning)
                 capture(response.get('usage') if isinstance(response, Mapping) else getattr(response, 'usage', None))
                 result = _normalise_response(response)
+                if on_reasoning and result.reasoning:
+                    on_reasoning(result.reasoning)
                 if on_delta and result.content:
                     on_delta(result.content)
                 return result
@@ -321,7 +380,7 @@ class ModelClient:
 
     def complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]],
                  *, temperature: float = 0, on_delta=None, on_stream_reset=None,
-                 retry: bool = True) -> ModelResponse:
+                 retry: bool = True, on_reasoning=None) -> ModelResponse:
         if self._responder is not None:
             return _normalise_response(self._responder(messages=messages, tools=tools,
                                                        model=self.model, temperature=temperature))
@@ -332,7 +391,8 @@ class ModelClient:
         for attempt in range(attempts):
             try:
                 return self._request_response(request, on_delta=on_delta,
-                                              on_stream_reset=on_stream_reset, retry=retry)
+                                              on_stream_reset=on_stream_reset, retry=retry,
+                                              on_reasoning=on_reasoning)
             except OutputLimitExceeded as exc:
                 if attempt == attempts - 1:
                     raise OutputLimitExceeded(

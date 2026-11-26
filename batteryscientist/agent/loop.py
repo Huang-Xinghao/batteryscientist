@@ -201,6 +201,11 @@ class AgentLoop:
             self._prepare_tool_batch(response.tool_calls)
             self._progress("model_end", phase=phase, iteration=iteration,
                            tools=[call.name for call in response.tool_calls])
+            if response.reasoning:
+                # The full thinking text replaces its streamed deltas in the history.
+                self._progress("assistant_reasoning", phase=phase, iteration=iteration,
+                               content=response.reasoning[:20000],
+                               truncated=len(response.reasoning) > 20000)
             if response.content:
                 self._progress("assistant_output", phase=phase, iteration=iteration,
                                content=response.content[:20000],
@@ -296,6 +301,9 @@ class AgentLoop:
                         lambda: self._progress('assistant_delta', phase=phase, iteration=iteration, content=text)),
                     'on_stream_reset': lambda: event_loop.call_soon_threadsafe(
                         lambda: self._progress('assistant_stream_start', phase=phase, iteration=iteration)),
+                    'on_reasoning': lambda text: event_loop.call_soon_threadsafe(
+                        lambda: self._progress('assistant_reasoning_delta', phase=phase,
+                                               iteration=iteration, content=text)),
                 }
             error_kind = "model_error"
             return await self._run_sync(self.model.complete, request_messages, schemas, **stream_options)

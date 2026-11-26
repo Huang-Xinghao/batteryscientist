@@ -24,15 +24,41 @@ def compact_threshold(max_tokens):
     return max_tokens * 90 // 95
 
 
+logger = logging.getLogger(__name__)
+
+
 @lru_cache(maxsize=1)
 def _encoding():
+    """The o200k tokenizer, or None when it cannot be loaded.
+
+    tiktoken downloads the encoding file on first use unless TIKTOKEN_CACHE_DIR holds
+    it. A blocked or flaky connection must not fail model requests, so a failed load
+    falls back to an estimate; the failure is cached to avoid retrying every call.
+    """
     # The custom gpt-6.1-sol name has no published tokenizer mapping.
-    return tiktoken.get_encoding('o200k_base')
+    try:
+        return tiktoken.get_encoding('o200k_base')
+    except Exception as exc:  # network, proxy, TLS or cache errors
+        logger.warning("tiktoken o200k_base unavailable (%s); estimating token counts. "
+                       "Set TIKTOKEN_CACHE_DIR to a directory with the encoding file to avoid this.", exc)
+        return None
+
+
+def estimated_tokens(text):
+    """Conservative count without a tokenizer: UTF-8 bytes / 3.
+
+    About one token per CJK character and an overestimate for Latin text, so
+    context budgets stay on the safe side.
+    """
+    return len(text.encode('utf-8')) // 3 + 1
 
 
 @lru_cache(maxsize=128)
 def text_tokens(text):
-    return len(_encoding().encode(text, disallowed_special=()))
+    encoding = _encoding()
+    if encoding is None:
+        return estimated_tokens(text)
+    return len(encoding.encode(text, disallowed_special=()))
 
 
 MEMORY_PREFIX = ('Role continuation memory: retain verified findings and completed checks. '

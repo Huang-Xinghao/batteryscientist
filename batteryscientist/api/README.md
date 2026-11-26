@@ -31,3 +31,13 @@ FastAPI 服务层，供 `batteryscientist-web` 前端使用。启动：`./run-we
 
 - `GET /api/projects/{id}/proposal-overview` 的 `pendingReview` 字段说明是否有这样的草稿（修改条数、改过的章节、是否有修改意见或修订记录、是否无法读取），前端据此提示用户；判断逻辑与拦截共用 `pending_proposal_review()`。
 - `POST /api/projects/{id}/idea-canvas/archive` 把草稿和修订记录移到 `refine-logs/archive/idea-review-<时间>/`，不删除；运行期间不可调用，成功后记录 `proposal_review_archived` 事件。
+
+## 模型思考过程
+
+提供方在流式响应中返回思考内容时（OpenAI 兼容接口的 `reasoning_content` 或 `reasoning` 字段，DeepSeek、Qwen、vLLM、OpenRouter 等会返回；不提供的模型则没有），`integrations/model.py` 把它与正式回答分开收集：
+
+- 生成过程中发送 `assistant_reasoning_delta` 事件，与回答增量 `assistant_delta` 分别合并存储；思考内容总是先于回答文本送达。
+- 每轮结束时发送一次完整的 `assistant_reasoning` 事件（最多 20,000 字符），前端用它替换流式增量。
+- 思考内容只用于展示，不会作为对话历史再发给模型；`workflow-progress.json` 不记录这些增量。
+
+Token 计数使用 tiktoken 的 `o200k_base`。若服务器无法下载该编码文件，会记录一次警告并改用保守估算（UTF-8 字节数 / 3），不会让模型请求失败；可设置 `TIKTOKEN_CACHE_DIR` 预先放置编码文件。

@@ -74,6 +74,10 @@ def execute(run_id):
             os.environ[OWNER_ENV] = previous
 
 
+# Streamed text whose adjacent deltas are merged into one stored event.
+STREAMED_KINDS = {'assistant_delta', 'assistant_reasoning_delta'}
+
+
 @contextmanager
 def buffered_events(project_id, run_id):
     """Combine adjacent text deltas; flush before other events and on exit."""
@@ -84,14 +88,14 @@ def buffered_events(project_id, run_id):
     def flush():
         nonlocal pending, last_flush
         if pending is not None:
-            event(project_id, 'assistant_delta', pending, run_id)
+            event(project_id, pending['kind'], pending, run_id)
             pending = None
         last_flush = time.monotonic()
 
     def emit(record):
         nonlocal pending
         with lock:
-            if record['kind'] != 'assistant_delta':
+            if record['kind'] not in STREAMED_KINDS:
                 flush()
                 event(project_id, record['kind'], record, run_id)
                 return

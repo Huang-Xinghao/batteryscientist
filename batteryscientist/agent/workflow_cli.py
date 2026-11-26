@@ -161,7 +161,8 @@ def execute_stage(project: Path, node: str, instruction: str, *, role: str, proj
             progress['status'] = 'awaiting_answer'
         elif kind == 'user_question_answered':
             progress['status'] = 'running'
-        if kind == 'assistant_delta':
+        # Streamed text is forwarded live but too frequent to persist as progress.
+        if kind in {'assistant_delta', 'assistant_reasoning_delta'}:
             if on_event is not None:
                 on_event(record)
             return
