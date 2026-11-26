@@ -242,12 +242,27 @@ class LibraryFiguresView(BaseModel):
     truncated: bool
 
 
+class PendingReviewView(BaseModel):
+    """An unfinished proposal-review draft that blocks approving the proposal."""
+
+    changes: int
+    editedSections: int
+    hasFeedback: bool
+    hasRevision: bool
+    unreadable: bool
+
+
 class ProposalOverviewView(BaseModel):
     sha256: str
     diagram: str
     input: str
     architecture: str
     output: str
+    pendingReview: PendingReviewView | None = None
+
+
+class ReviewArchiveView(BaseModel):
+    archived: list[str]
 
 
 class ReviewImpactView(BaseModel):
