@@ -411,7 +411,10 @@ class PhaseAgent(AgentLoop):
         self.model = model_client or ModelClient(selected_model, api_key=api_key,
                                                  base_url=base_url, timeout=timeout)
         self.skills_root = repo_root / "batteryscientist" / "skills"
-        self.knowledge_root = Path(knowledge_root).resolve() if knowledge_root else None
+        from batteryscientist.project_config import resolve_battery_root
+        self.knowledge_root = (resolve_battery_root(self.project)
+                               if knowledge_root == self.DEFAULT_BATTERY_KNOWLEDGE_ROOT
+                               else Path(knowledge_root).resolve() if knowledge_root else None)
         self.phase = phase
         if context_max_tokens < 1000:
             raise ValueError("context_max_tokens must be at least 1000")
@@ -556,7 +559,16 @@ class PhaseAgent(AgentLoop):
 
     def _system_prompt(self) -> str:
         from batteryscientist.project_config import interaction_instructions
+        from batteryscientist.tools.data_access import registered_data_sources
+        data_context = json.dumps({
+            'battery_resource_roots': [str(path) for path in self.knowledge_roots],
+            'local_data_sources': registered_data_sources(self.knowledge_roots),
+        }, ensure_ascii=False)
         return (f"你是研究项目的执行 Agent。当前阶段：{self.phase}。\n"
+                + "当前环境资源与数据登记：" + data_context + "\n"
+                  "只有已登记且exists=true的数据源可以读取；列表为空表示未登记本地原始数据。"
+                  "历史报告中的服务器绝对路径不代表当前环境已挂载，不应据此反复尝试find。"
+                  "规划任务可引用已有报告并明确尚未重新核验的内容；需要原始数据的检查须标注阻塞，不能声称已完成。\n"
                 + (f"当前角色：{self.role}。{ROLE_DESCRIPTIONS[self.role]}\n" if self.role else "")
                 + "按本次派单和当前 Skill 自行读取所需材料、完成交付；完成派单后停止，不自行推进下游阶段。"
                   "历史会话和角色窗口的讨论不构成本次执行授权。审批由主控接收，不自行批准。"

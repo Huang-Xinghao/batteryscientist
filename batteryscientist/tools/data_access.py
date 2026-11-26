@@ -56,5 +56,7 @@ def resolve_data_read(workspace, knowledge_roots, value):
         return candidate
     for source in registered_data_sources(knowledge_roots):
         if candidate.is_relative_to(Path(source['path'])):
+            if not source['exists']:
+                raise FileNotFoundError('数据源已登记但当前环境未挂载：' + source['path'])
             return candidate
     raise ValueError(f'path is outside workspace and registered data roots: {value}')
