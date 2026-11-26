@@ -305,8 +305,21 @@ def read_wiki(ctx: ToolContext, wiki_path: str) -> ToolResult:
     if not path.is_file():
         return ToolResult(f"Wiki page not found: {wiki_path}", True)
     page = load_page(path)
+    writing_cards = []
+    if path.parent.name == "papers":
+        directory = root / "writing" / path.parent.parent.name / path.stem
+        for candidate in sorted(directory.glob("*.json")):
+            if not candidate.resolve().is_relative_to(root):
+                continue
+            try:
+                record = json.loads(candidate.read_text(encoding="utf-8"))
+                writing_cards.append({"card_path": candidate.relative_to(root).as_posix(),
+                                      "focus": record["focus"], "user_goal": record["user_goal"]})
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
     return ToolResult(json.dumps({
         **paper_card(page, root),
         "quality_records": _quality_records(root, path),
         "source_record": _source_record(root, path),
+        "writing_cards": writing_cards,
     }, ensure_ascii=False))

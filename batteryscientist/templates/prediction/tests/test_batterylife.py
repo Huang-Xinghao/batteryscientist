@@ -36,9 +36,9 @@ def dataset(tmp_path):
     args = Namespace(root_path=str(root), dataset='Tongji', condition='all',
         tasks=['soh', 'trajectory', 'rul'], context=2, horizon=2,
         early_cycle_threshold=4, charge_discharge_length=20, hidden_dim=8,
-        use_gpu=False, use_multi_gpu=False, gpu=0, model='IC2ML',
+        use_gpu=False, use_multi_gpu=False, gpu=0, model='tempalte',
         checkpoints=str(tmp_path/'checkpoints'), batch_size=2, num_workers=0,
-        train_epochs=1, patience=1, learning_rate=.001, seed=2021)
+        min_epochs=1, max_epochs=1, patience=1, learning_rate=.001, seed=2021)
     return root, names, args
 
 

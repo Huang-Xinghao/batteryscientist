@@ -1,1 +1,1 @@
-"""BatteryLife data protocol for IC2ML."""
+"""BatteryLife data protocol for tempalte."""

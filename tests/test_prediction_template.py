@@ -32,7 +32,7 @@ def test_packaged_soh_template_runs_standard_jobs(tmp_path):
     config = json.loads(config_path.read_text())
     assert config['model'] == 'SOHLinear'
     assert config['selection_metric'] == 'trajectory.rmse'
-    config.update(context=2, horizon=2, train_epochs=1, patience=1, batch_size=2, use_gpu=False)
+    config.update(context=2, horizon=2, min_epochs=1, max_epochs=1, patience=1, batch_size=2, use_gpu=False)
     config_path.write_text(json.dumps(config))
     queued = prepare_template_run(ctx, name='history', device='cpu', include_test=True)
     assert not queued.is_error, queued.output

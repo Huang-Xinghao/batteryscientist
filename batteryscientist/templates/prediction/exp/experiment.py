@@ -173,7 +173,7 @@ class Experiment:
         optimizer = self.adapter.optimizer(self.model)
         stopping = EarlyStopping(patience=self.args.patience, verbose=True)
         history = []
-        for epoch in range(self.args.train_epochs):
+        for epoch in range(self.args.max_epochs):
             training, validation = self._epoch(train, optimizer), self._epoch(val)
             metric_name = getattr(self.args, 'selection_metric', 'loss')
             score = validation
@@ -191,7 +191,7 @@ class Experiment:
             print(f'Epoch {epoch+1}: train={training:.7f}, validation={validation:.7f}')
             stopping(score, self.model, str(path))
             (path / 'training_history.json').write_text(json.dumps(history, indent=2, allow_nan=False))
-            if stopping.early_stop:
+            if epoch + 1 >= self.args.min_epochs and stopping.early_stop:
                 break
             if getattr(self.args, 'lradj', 'constant') != 'constant':
                 adjust_learning_rate(optimizer, epoch+2, self.args)

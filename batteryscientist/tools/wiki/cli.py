@@ -157,9 +157,23 @@ def main():
                         help="Path to a newline-delimited file of arXiv IDs (# comments ok)")
     p_sync.add_argument("--update-on-exist", action="store_true")
 
+    p_writing = subparsers.add_parser("writing_card", help="按需拆解已有 Wiki 论文的写法")
+    p_writing.add_argument("paper_id", help="paper:slug 或 Wiki 论文相对路径")
+    p_writing.add_argument("--focus", choices=["introduction", "abstract", "method", "experiments", "full"], default="introduction")
+    p_writing.add_argument("--user-goal", default="")
+    p_writing.add_argument("--force", action="store_true")
+
     args = parser.parse_args()
 
-    if args.command == "init":
+    if args.command == "writing_card":
+        import json
+        from batteryscientist.integrations.model import load_env_file
+        from ..core import ToolContext
+        from .writing import extract_card
+        load_env_file(Path(__file__).resolve().parents[3] / ".env")
+        result = extract_card(ToolContext(Path.cwd()), args.paper_id, args.focus, args.user_goal, args.force)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "init":
         init_wiki(args.wiki_root, separate_origins=True)
     elif args.command == "slug":
         print(slugify(args.title, args.author, args.year))

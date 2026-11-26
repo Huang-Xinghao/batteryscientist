@@ -201,8 +201,12 @@ def edit(ctx: ToolContext, path: str, old: str, new: str, replace_all: bool = Fa
 
 @tool(read_only=True)
 def find(ctx: ToolContext, pattern: str, path: str | None = None, limit: int = 200) -> ToolResult:
-    """Find workspace files using a glob pattern."""
+    """Find files under path using a glob pattern; no matches is a successful empty result."""
     target = ctx.resolve_read(path)
+    if not target.exists():
+        return _error(f"Path not found: {path or '.'}", "PATH_NOT_FOUND")
+    if not target.is_dir():
+        return _error(f"Not a directory: {path}", "NOT_DIRECTORY")
     matches = []
     for p in target.glob(pattern):
         try:
@@ -211,13 +215,17 @@ def find(ctx: ToolContext, pattern: str, path: str | None = None, limit: int = 2
             continue
         matches.append(ctx.display_path(p))
     matches.sort()
-    return ToolResult("\n".join(matches[: max(1, min(limit, 5000))]) or "No files found")
+    returned = matches[: max(1, min(limit, 5000))]
+    return ToolResult("\n".join(returned) or "No files found",
+                      metadata={"match_count": len(returned), "truncated": len(returned) < len(matches)})
 
 
 @tool(read_only=True)
 def grep(ctx: ToolContext, pattern: str, path: str | None = None, limit: int = 200) -> ToolResult:
-    """Search UTF-8 text files with a regular expression."""
+    """Search UTF-8 files with a regular expression; no matches is a successful empty result."""
     target = ctx.resolve_read(path)
+    if not target.exists():
+        return _error(f"Path not found: {path or '.'}", "PATH_NOT_FOUND")
     files = [target] if target.is_file() else [p for p in target.rglob("*") if p.is_file()]
     try:
         regex = re.compile(pattern)
@@ -234,8 +242,9 @@ def grep(ctx: ToolContext, pattern: str, path: str | None = None, limit: int = 2
             if regex.search(line):
                 matches.append(f"{ctx.display_path(file)}:{number}:{line}")
                 if len(matches) >= max(1, min(limit, 2000)):
-                    return ToolResult("\n".join(matches), metadata={"truncated": True})
-    return ToolResult("\n".join(matches) or "No matches")
+                    return ToolResult("\n".join(matches), metadata={"match_count": len(matches), "truncated": True})
+    return ToolResult("\n".join(matches) or "No matches",
+                      metadata={"match_count": len(matches), "truncated": False})
 
 
 @tool(read_only=True)
@@ -250,11 +259,10 @@ async def bash(ctx: ToolContext, command: str, cwd: str | None = None, timeout_s
     """Run a shell command in the workspace with bounded output and timeout.
 
     Uses Bash with errexit and pipefail. Relative cwd starts at the workspace.
-    Chain dependent steps with &&; handle expected failures explicitly with if.
-    Failures return the exit code and changed, explicitly redirected workspace
-    log tails. Chain dependent generation steps with && so failure is preserved.
-    After generating previews, confirm success and list actual nonempty output
-    files before calling view_image; never guess page filenames or page counts.
+    Run independent queries in separate calls; chain dependent steps with &&.
+    Use ls/find to locate files and grep for text searches (no matches is normal).
+    Handle expected shell search misses with if; keep stderr for diagnostics.
+    Failures return the exit code, stderr first, stdout and redirected log tails.
     """
     workdir = ctx.resolve(cwd)
     if not workdir.is_dir():
@@ -286,11 +294,15 @@ async def bash(ctx: ToolContext, command: str, cwd: str | None = None, timeout_s
                 summaries.append(f"Log tail ({ctx.display_path(path)}):\n{tail}")
             except (OSError, ValueError):
                 continue
-        details = '\n\n'.join(summaries) or 'No updated redirected workspace log found; inspect the command log.'
-        output = (f"Command failed (exit code {process.returncode}).\n"
-                  "Stop dependent preview/image checks. Fix the error, rerun generation, "
-                  "then confirm success and list actual nonempty output files before view_image.\n\n"
-                  f"{details}\n\nConsole output:\n{output or '(empty)'}")[:12000]
+        sections = [f"Command failed (exit code {process.returncode})."]
+        if stderr:
+            sections.append('Stderr (tail):\n' + stderr.decode('utf-8', errors='replace')[-5000:])
+        if stdout:
+            sections.append('Stdout (tail):\n' + stdout.decode('utf-8', errors='replace')[-4000:])
+        sections.extend(summaries)
+        if not stderr and not stdout and not summaries:
+            sections.append('No output.')
+        output = '\n\n'.join(sections)[:12000]
     return ToolResult(output, process.returncode != 0, {"returncode": process.returncode})
 
 

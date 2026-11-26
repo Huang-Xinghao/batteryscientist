@@ -44,7 +44,7 @@ def prepare_experiment_template(
     adapter=soh_sequence selects measured SOH histories -> future trajectories,
     with SOHLinear as an editable baseline, 64/24 windows, cell-macro RMSE selection
     and cell-balanced sampling. It needs no life labels or charge curves. For this
-    adapter choose tasks=[trajectory]. cell_curves preserves the IC2ML protocol.
+    adapter choose tasks=[trajectory]. cell_curves preserves the tempalte protocol.
     split_file accepts train/val/test cell filenames, optionally under datasets[name],
     or electrolyte row-index lists. Cell membership is copied into cell_splits.json;
     comparisons share a protocol_file recording data/windows/evaluation conditions.

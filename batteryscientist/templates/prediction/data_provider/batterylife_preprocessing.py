@@ -1,7 +1,7 @@
 """BatteryLife curve preprocessing, retained verbatim from data_loader.py.
 
 Source: BatteryLife/data_provider/data_loader.py in the local reference checkout.
-The IC2ML adapter owns task/window construction; it does not redefine these curves.
+The tempalte adapter owns task/window construction; it does not redefine these curves.
 """
 
 import numpy as np

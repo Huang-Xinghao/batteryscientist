@@ -17,9 +17,10 @@ description: 将电池实验计划实现为代码，调用本地执行子 skill 
 1. **`refine-logs/EXPERIMENT_PLAN.md`**：实验类别、数据划分、实验设置及计划产物，是实现实验的主要依据。
 2. **`refine-logs/EXPERIMENT_TRACKER.md`**：runner 自动生成的块级进度视图，一块一行，仅供查看；具体 jobs 和依赖以 manifest 为准。
 3. **`refine-logs/FINAL_PROPOSAL.md`**：研究任务、方法定义和关键机制，用于确认代码实际实现的内容。
-4. **项目内基础模板（可选）**：读取项目已准备的参考代码和配置，在适合当前任务的模板上修改和扩展，默认使用 `experiments/template/` 的 IC2ML 通用框架。模板由当前项目的研究对象、计划和实际目录决定。
+4. **项目内基础模板**：读取项目已准备的参考代码和配置，在适合当前任务的模板上修改和扩展，默认使用 `experiments/template/` 的 tempalte 通用框架。
 5. **资源库的数据登记信息**：用 `battery_resources(action="search", query="数据集名称")` 获取说明与登记路径，`action="read"` 配合 resource_id 阅读说明；实现加载器需要核对样本时，用 `action="inspect"` 配合 path 查看结构。
    同时读取 `data-search/DATA_REPORT.md`，利用数据包及配套文件索引定位标签、元数据、划分和加载代码；未在电芯子目录找到标签不能据此判断数据包缺失标签。
+6. **默认尽可能利用所有空闲、可调度的 GPU并行**，除非用户指定单卡或 CPU 执行。
 
 ## Workflow
 
@@ -80,7 +81,7 @@ data_path="Data Report 已核实的数据根路径", destination="experiments/te
 #### 3.1 实现计划中的方法
 
 围绕已读取的调用链补齐模型、基线、消融、损失及数据处理。任务设置写入配置，训练参数可通过命令行覆盖。
-编码前用 `battery_resources(action="read", resource_id="代码和绘图指南/代码设计")` 读取代码设计指南，按其中的训练循环、数据传输、batch size 和线程要求实现。
+编码前用 `battery_resources(action="read", resource_id="代码和绘图指南/代码设计")` 写代码前读取代码设计指南，按其中的模板复用、模块扩展、接口、配置和计算资源要求实现。
 
 #### 3.2 分开训练验证与最终测试
 
@@ -103,7 +104,7 @@ manifest 的命令从项目根目录执行。使用工具返回的 `project_trai
 ```text
 python experiments/template/run.py --config experiments/template/task_config.json \
   --stage train --tasks life --seed 17 \
-  --output_dir results/2_overall_performance/B1_Tongji_IC2ML/seed_17
+  --output_dir results/2_overall_performance/B1_Tongji_tempalte/seed_17
 ```
 
 最终测试使用相同的模型和数据配置，通过 `--checkpoint` 指向该训练目录。
@@ -130,6 +131,8 @@ python experiments/template/run.py --config experiments/template/task_config.jso
 - 结合证据处理审阅意见，优先修复影响实验有效性的问题；有依据时可以不采纳，关键分歧简要说明。
 - 核心实现有较大修改时，可再次审阅。审阅执行成功不等于代码正确，运行正确性以实际执行回执和结果为准；调用失败时查看错误并重试，**最多review次数为两次**。
 - 当因为某些原因报错后重启节点，实验已经开始运行或已完成时，**跳过这一步**
+
+**代码模版的意义在于嵌入电池专家对于实际场景领域的写代码经验，避免出现低级的逻辑错误，通过基础的框架将固定的数据集划分、训练、验证、测试流程和结果保存规范化，减少重复工作和错误，因此你应该最大程度的复用模版，在模版的基础上进行修改和扩展。**
 
 ### Phase 4: Execute Experiments
 
@@ -225,29 +228,29 @@ python experiments/template/run.py --config experiments/template/task_config.jso
   "required_inputs": ["experiments/template/task_config.json", "已登记的数据根路径"],
   "jobs": [
     {
-      "id": "B1_Tongji_IC2ML_train_seed17",
+      "id": "B1_Tongji_tempalte_train_seed17",
       "block_id": "B1",
       "depends_on": [],
-      "argv": ["python", "experiments/template/run.py", "--config", "experiments/template/task_config.json", "--tasks", "life", "--stage", "train", "--seed", "17", "--output_dir", "results/2_overall_performance/B1_Tongji_IC2ML/seed_17"],
+      "argv": ["python", "experiments/template/run.py", "--config", "experiments/template/task_config.json", "--tasks", "life", "--stage", "train", "--seed", "17", "--output_dir", "results/2_overall_performance/B1_Tongji_tempalte/seed_17"],
       "resources": {"device": "auto"},
       "timeout_seconds": 3600,
       "expected_outputs": [
-        {"path": "results/2_overall_performance/B1_Tongji_IC2ML/seed_17/checkpoint.pth"},
-        {"path": "results/2_overall_performance/B1_Tongji_IC2ML/seed_17/data_manifest.json"},
-        {"path": "results/2_overall_performance/B1_Tongji_IC2ML/seed_17/validation_metrics.json", "metrics": ["life.mae"]}
+        {"path": "results/2_overall_performance/B1_Tongji_tempalte/seed_17/checkpoint.pth"},
+        {"path": "results/2_overall_performance/B1_Tongji_tempalte/seed_17/data_manifest.json"},
+        {"path": "results/2_overall_performance/B1_Tongji_tempalte/seed_17/validation_metrics.json", "metrics": ["life.mae"]}
       ]
     },
     {
-      "id": "B1_Tongji_IC2ML_test_seed17",
+      "id": "B1_Tongji_tempalte_test_seed17",
       "block_id": "B1",
-      "depends_on": ["B1_Tongji_IC2ML_train_seed17"],
-      "argv": ["python", "experiments/template/run.py", "--stage", "test", "--checkpoint", "results/2_overall_performance/B1_Tongji_IC2ML/seed_17"],
+      "depends_on": ["B1_Tongji_tempalte_train_seed17"],
+      "argv": ["python", "experiments/template/run.py", "--stage", "test", "--checkpoint", "results/2_overall_performance/B1_Tongji_tempalte/seed_17"],
       "resources": {"device": "auto"},
       "timeout_seconds": 3600,
       "expected_outputs": [
-        {"path": "results/2_overall_performance/B1_Tongji_IC2ML/seed_17/targets.csv", "nonempty": true},
-        {"path": "results/2_overall_performance/B1_Tongji_IC2ML/seed_17/predictions.csv", "nonempty": true},
-        {"path": "results/2_overall_performance/B1_Tongji_IC2ML/seed_17/metrics.json", "metrics": ["life.mae"]}
+        {"path": "results/2_overall_performance/B1_Tongji_tempalte/seed_17/targets.csv", "nonempty": true},
+        {"path": "results/2_overall_performance/B1_Tongji_tempalte/seed_17/predictions.csv", "nonempty": true},
+        {"path": "results/2_overall_performance/B1_Tongji_tempalte/seed_17/metrics.json", "metrics": ["life.mae"]}
       ]
     }
   ]
@@ -256,11 +259,3 @@ python experiments/template/run.py --config experiments/template/task_config.jso
 
 将示例中的任务、数据路径和指标替换为当前计划的实际值。多任务指标按任务名读取，例如 `soh.rmse`、`rul.mae`。
 CSV 中的向量目标由 `target_index` 区分，后处理结合样本 JSON 解释电芯、观测位置或配方信息。
-
-正式 job 必须通过 `block_id` 关联计划中的 D/B 块。
-不要再使用 R001 等另一套实验编号。job ID 标识具体执行任务，块 ID 标识研究设计。
-独立任务显式填写 `depends_on: []`；省略依赖会保留按 manifest 顺序串行的既有行为。
-跨块复用 checkpoint 等产物时，消费者通过 `depends_on` 依赖生产 job，不要重复训练。
-统计汇总作为后处理 job：只对可比较配置的多个 seed 聚合，不把同块不同模型混为一组。
-`expected_outputs` 的每项必须是含 `path` 和可选 `metrics` 的对象，不能写成路径字符串。
-任务正常退出且产物校验通过才记为完成。JSON 对象/数组和 CSV 表允许为空；需要非空时在对应 `expected_outputs` 条目设置 `"nonempty": true`。声明的 `metrics` 字段必须存在且数值有效。

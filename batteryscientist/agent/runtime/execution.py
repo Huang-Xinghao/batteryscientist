@@ -33,6 +33,7 @@ class StageAssignment(BaseModel):
     instruction: str = Field(min_length=1, max_length=20000)
     role: Role
     full_stage: bool = Field(default=False, description="完整研究阶段为true；普通修改、检查或问答任务为false，不套用整阶段验收。")
+    required_tools: list[str] = Field(default_factory=list, description="本次任务必须使用的阶段工具名，如bash、run_experiments；派单前检查，缺少时不启动任务。")
 
     @model_validator(mode='after')
     def nonempty(self):

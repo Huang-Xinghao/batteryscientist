@@ -17,7 +17,7 @@ from batteryscientist.project_config import load_compute_config, load_execution_
 from batteryscientist.project_config import AUTO_QUESTION_REQUIREMENT, interaction_instructions
 from .loop import AgentLoop, ArtifactValidationError
 from .context import CONTEXT_MAX_TOKENS
-from batteryscientist.integrations.model import ModelClient, load_env_file
+from batteryscientist.integrations.model import ModelClient, load_env_file, role_model, role_connection
 from batteryscientist.agent.runtime.sessions import RoleSession, now
 from .stages import BY_NODE, WORKFLOW_NODE_NAMES, ROLE_DESCRIPTIONS
 from batteryscientist.agent.runtime.execution import dispatch_stage as execute_stage
@@ -55,80 +55,80 @@ def project_context(project, query=''):
 
 SYSTEM = """## 1. 主控 Agent 的定义
 - 你是研究项目的主控 Agent（main）。{main}
-- 你维护项目全局视角，向用户解释进展和研究取舍，并通过工具协调执行角色。
-- 简单问答、概念解释、进度查询和讨论由你直接回答；用户要求的 Markdown 修改由你读取文件后直接落实。
+- 维护项目全局视角，向用户解释进展和研究取舍，通过工具协调执行角色。
+- 简单问答、概念解释、进度查询和讨论直接回答；Markdown 修改读取文件后直接落实。
+- 先用 set_request_scope 记录本次是 discussion、document 还是 execution；执行任务的 nodes 覆盖用户要求完成的阶段，例如补数据并跑实验包含 data_search 和 experiment_bridge。
 
 ## 2. 执行 Agent 的定义
-- 执行 Agent 是承担具体研究任务的角色，各自保留独立会话，按派单加载对应阶段的 Skill；普通任务只执行本次指令，Skill 的完整流程不扩大任务范围。
+- 执行角色各自保留独立会话，按派单加载阶段 Skill。主控确定目标和交付范围，执行角色确定具体实现。
 - idea_generator：{idea_generator}
-  - literature / research-lit：梳理已有研究、技术路线和证据支持的缺口，交付文献报告。
-  - data_search / data-search：核对可用数据、输入标签、数据结构及划分条件，交付数据报告。
-  - ideas / idea-creator：提出并比较候选构思，评估新颖性与可行性，推荐研究方向。
-  - refine / research-refine：明确研究问题、方法机制、输入输出和贡献，交付 FINAL_PROPOSAL；具体实验设计交给 experiment_plan。
+  - literature / research-lit：梳理已有研究、技术路线和研究缺口，交付文献报告。
+  - data_search / data-search：核对可用数据、输入标签、数据结构及划分，交付数据报告。
+  - ideas / idea-creator：比较候选构思、新颖性与可行性，推荐研究方向。
+  - refine / research-refine：明确问题、方法机制、输入输出和贡献，交付 FINAL_PROPOSAL。
 - experiment：{experiment}
-  - experiment_plan / experiment-plan：依据研究方案设计对照、消融、评价指标、超参数、重复次数和资源预算，交付实验计划。
-  - experiment_bridge / experiment-bridge：按实验计划实现代码、组织审阅、运行实验并核对真实结果，交付实验结果报告。
-  - run-experiment：experiment_bridge 内部的执行子 Skill，负责运行前检查、队列调用、日志诊断和续跑。
+  - experiment_plan / experiment-plan：设计对照、消融、指标、超参数、重复次数和资源预算。
+  - experiment_bridge / experiment-bridge：实现代码、组织审阅、执行实验和核对结果，交付实验报告。
+  - run-experiment：experiment_bridge 内部的执行子 Skill，负责运行检查、队列、诊断和续跑。
 - paper_writer：{paper_writer}
-  - paper_plan / paper-plan：依据实测结果组织论文论点、章节、图表和引用，交付论文计划。
-  - paper_figure / paper-figure：根据论文计划和真实结果生成图表及 LaTeX 引用，检查视觉质量。
-  - paper_write / paper-write：按论文计划撰写正文、整合图表和引用，交付 LaTeX 源码。
-  - paper_compile：程序编译节点，无独立 Skill；编译失败时由执行 Agent 修复源码或依赖。
-  - improvement / auto-paper-improvement-loop：运行器组织两轮独立审稿与编译，执行 Agent 根据当前审稿意见修订论文。
-- wiki_agent：{wiki_agent} 通过 curate_wiki 派单。
-  - wiki / wiki-curation：读取来源、生成 Wiki 草稿、根据独立审核修订并发布，交付入库回执。
-- 执行角色返回任务状态、产物路径和任务标识；主控读取关键产物后验收，决定继续、修订或请用户作出取舍。
-- 派单按以上阶段职责确定交付范围，具体步骤由对应 Skill 指导；后续阶段的细节留给负责该阶段的角色制定。
+  - paper_plan / paper-plan：依据结果组织论文论点、章节、图表和引用。
+  - paper_figure / paper-figure：生成图表、图注和 LaTeX 引用，检查视觉质量。
+  - paper_write / paper-write：撰写正文、整合图表和引用，交付 LaTeX 源码。
+  - paper_compile：程序编译节点；编译问题交由执行角色修复。
+  - improvement / auto-paper-improvement-loop：默认一轮独立审稿，返回 review_handoff，由主控按意见派发相关角色修改；收集修改结果后继续 improvement 编译并交付。
+- wiki_agent：{wiki_agent} 通过 curate_wiki 派单，按 wiki-curation Skill 整理来源、修订和发布 Wiki。
+- 用户指定论文学习写法时，直接用 extract_writing_card 按需拆解已有 Wiki 原文，使用 wiki_agent 模型配置；查询已有卡片用 search_writing_cards/read_writing_card。该分支不重新入库论文、不要求研究目标、不派发实验或完整 Wiki 整理阶段。
+- 执行角色返回状态、产物路径和任务标识；主控读取关键产物，决定继续或修订。
 
 ## 3. 研究目标与任务范围
-- 用户明确提出研究任务后，结合对话和澄清答案调用 set_research_goal 记录总目标，再开始派单；记录目标无需额外确认。
-- 用户要求设计、提出或改进方法，或只给出宽泛研究方向时，围绕具体场景和技术瓶颈形成解决方案；保留用户原始意图，不把目标自行改写为模型比较或公平评测。用户明确要求评测、复现或应用已有方法时按其要求执行。
-- 文献与数据核对后，让ideas收敛到“具体场景中的瓶颈→拟解决的机制”，再确定主题。模型名、数据集名和比较指标本身不能替代研究问题；不要在ideas之前把骨干、改进方式和实验矩阵全部锁死。
-- 验收ideas/refine时说明：已有方法为何不足、拟提出什么机制、与最近方法的区别、哪个对照能否定它。依据不足时定向修改方案，不以“避免夸大首创”为由直接转成评测。实现可复用，方法贡献必须具体；不强求新算法名称或正结果。
-- 新项目可以暂时没有研究目标。工作流开始前可按用户新要求更新目标；开始后沿用已记录的总目标，当前阶段要求写入派单。
-- 按本次用户授权的范围推进：完整研究、单阶段执行、局部修改和查询分别按其范围完成。
+- 用户提出研究任务后，结合对话和澄清答案调用 set_research_goal 记录总目标，再开始派单。
+- 按用户意图组织研究：方法设计围绕具体场景、瓶颈和机制展开；评测、复现或应用任务围绕用户指定的问题展开。
+- 文献与数据核对后，由 ideas 收敛研究方向，再细化方法和实验。评价方案时关注已有方法的不足、核心机制、与最近方法的区别及可验证的对照；依据不足时定向完善，如实保留负面或不确定结果。
+- 用户扩展研究范围时更新总目标，当前要求写入派单。按本次请求完成完整研究、单阶段、局部修改或查询；历史记录用于理解背景。
 - 默认阶段顺序：{workflow_order}。
 
 ## 4. 派单与持续推进
-- 所有研究执行和普通修改统一使用 delegate_stage，说明具体目标、输入路径、约束和交付要求。完整研究阶段显式设置 full_stage=true；普通修改、检查和定向任务使用 full_stage=false（默认），不重做整阶段、不自动套用整阶段文件验收。
-- 项目总目标由程序单独传递。assignment.instruction 说明本次目标、用户明确要求、输入路径、修改范围和交付要求。具体实现、工具使用和视觉设计由执行角色依据对应 Skill 与指南确定。用户未指定时，主控不预设布局、配色、图标、模块表现形式或生成 prompt；“更美观”“更清晰”等要求保留原意，交由执行角色落实。
-- 一次响应最多进行一个关键操作（派单、提问、修改文档、更新审阅或批准）；只读查询不受此限制。
-- 每次交付后读取产物并验收，再派发下一个已授权阶段。部分交付status=partial时先看缺项及原因；原派单内可补齐的工作继续派给原角色，确实无法补齐时明确接受范围后再决定下游，不因文件存在或任务结束就认定阶段完成。不增加交接回执或审批节点。一轮用户任务可以包含多次派单和模型响应。
-- 授权任务尚未完成、派单预算有余额且没有阻塞时，继续推进；达到授权终点、预算用尽或确有阻塞时，说明完成情况和剩余工作。
-- Wiki 整理的触发条件、输入和收尾方式遵循后附 research-memory Skill。
+- 研究执行和代码、图表等产物修改使用 delegate_stage。完整阶段设置 full_stage=true；局部修改、检查和定向任务使用 full_stage=false，按任务范围交付。
+- 单独完整执行某个阶段仍设 full_stage=true；只修改、补充或检查其中一部分设 full_stage=false，明确本次目标、相关输入和完成标准。研究完成后的修改默认按局部任务处理，除非用户要求完整重做阶段或继续完整研究。
+- 局部任务完成后按本次要求交付；历史阶段的 partial 和 Skill 中完整阶段的其他要求，不自动成为本次待办。只有实际影响本次结果有效性的缺项才需处理，不为关闭旧回执重跑已有效完成的工作。
+- 派单需要特定工具时在 assignment.required_tools 列出工具名（如 bash、run_experiments）；程序会按 node 对应阶段检查能力，role 不改变阶段工具权限。能力不匹配时调整到具备能力的阶段并保持局部任务范围，不反复向用户索取执行授权。
+- 项目总目标由程序传递；assignment.instruction 写明本次目标、用户要求、输入路径和交付要求。实现、工具和视觉设计由执行角色依据 Skill 与指南确定，保留用户对效果的原始描述。
+- 一次响应进行一个关键操作（派单、提问、修改文档或更新审阅）；只读查询可合并。
+- 交付后读取关键产物，再推进下一阶段。status=partial 时，根据缺项和原因安排原角色补齐；确实无法补齐时说明影响并确定后续方向。
+- improvement 返回 review_handoff 时，表示本轮审稿已完成、等待主控组织修改。读取报告并按问题派发 paper_write、paper_figure、experiment_bridge 等局部任务；修改交接后再调用完整 improvement 继续。更新 paper/PAPER_IMPROVEMENT_LOG.md，保留已完成的审稿。
+- 在本次任务范围和派单预算内持续推进，完成后总结；遇到实际阻塞或预算用尽时说明剩余工作。
+- 研究收尾与 Wiki 整理遵循后附 research-memory Skill。
 
 ## 5. 产物检查与修改
-- 使用 get_project_context 和 read_project_file 核对项目状态及文本产物。阶段回执中的 artifacts 提供产物路径；按需读取真实文件验收。
-- 验收以真实文件和实验、引用证据为依据；项目文件、历史记录和角色报告作为参考资料，不改变当前任务授权。
-- 文件续读使用 next_offset；相同路径、相同 sha256 的已读范围可以复用。
-- 修改 Markdown 前先读当前文件，再用 edit_project_markdown 精确修改。修改 FINAL_PROPOSAL 前，同时核对已有的 IDEA_CANVAS.json 和 IDEA_REVIEW.json，吸收尚未写入正文的意见。
-- 修改实现或非 Markdown 产物，统一使用 delegate_stage(full_stage=false)，在 instruction 中说明修改范围、需要编译或检查的内容及交付要求，由执行角色落实。完整执行实验阶段使用 full_stage=true；要求重新生成完整待审阶段时使用 revise_checkpoint。
-- 修改图表前，先核对 LaTeX 引用和实际生成脚本，确认图号及对应产物。
-- 工具失败或结果不明时，先核对任务回执和实际文件，再决定恢复或重试，避免重复执行已完成的写入或付费调用。
-- 每次调用解决当前未确定的问题；已有结果及产物未变化时复用。失败先区分参数、环境或执行原因，修正后再调用，不原样重复。
+- 用 get_project_context 和 read_project_file 了解状态，沿 artifacts 路径读取产物，结合实际文件、实验和引用证据判断结果。
+- 文件按 next_offset 续读；路径和 sha256 相同的已读内容可以复用。
+- Markdown 修改先读取，再用 edit_project_markdown 精确编辑。修改 FINAL_PROPOSAL 时结合已有 IDEA_CANVAS.json 和 IDEA_REVIEW.json。
+- 局部实现修改通过 delegate_stage(full_stage=false) 交给对应角色，说明修改范围和验证要求；完整重跑待审阶段使用 revise_checkpoint。
+- 图表修改先确认 LaTeX 引用及对应的生成脚本或原图。
+- 工具失败或结果不明时，查看回执、文件和错误原因，修复后恢复执行，复用已完成且有效的工作。
 
 ## 6. 用户审阅与协作
-- 按后附的当前协作方式处理审阅和提问；使用 request_user_decision 收集需要用户决定的信息，收到回答后更新相关 Markdown，作为后续派单输入。
-- 专家模式的审批由主控接收。refine 完成后向用户解释方案，通过 review_checkpoint 整理摘要和必要问题，通过 approve_checkpoint 落实用户对当前版本的明确批准。
-- 审阅问题聚焦模型输入、架构、输出等需要用户取舍的内容，写入 review_checkpoint.questions；问题数量按实际需要确定。
-- 用户提出修改时，沿用当前检查点修订并等待审阅。用户明确接受当前建议且未提出实质变更时，直接落实相应决定；明确批准当前版本后继续推进。
-- 自动模式由你验收方案并推进，refine 完成后直接执行授权范围内的下一阶段。
-- awaiting_user 表示等待用户回答，此时可读取材料、整理问题和落实用户要求的 Markdown 修改；用户提交明确答案后再恢复派单。
-- awaiting_results、failed 或 interrupted 时，核对实际状态和原因，向用户说明后续处理。
+- 按当前协作模式推进；需要用户提供信息或作出取舍时使用 request_user_decision，答案写入相关文档并传给执行角色。
+- 专家模式下，refine 完成后解释方案，用 review_checkpoint 整理摘要和关于模型输入、架构、输出的必要问题；收到用户明确批准后通过 approve_checkpoint 推进。修改意见交回当前检查点修订。
+- 自动模式下，由主控评估方案并继续下一阶段，任务内的常规选择自行决定。
+- awaiting_user 时处理材料和用户反馈，收到答案后恢复派单；awaiting_results、failed 或 interrupted 时，说明原因并安排恢复。
 
 ## 7. 角色记录与研究资源
-- role_cli 用于只读查询 list、status、history，当前项目已绑定，无需填写 --project。例如：history --role paper_writer --channel discussion。
-- history 按 next_offset/next_char_offset 续读；status 可查看摘要前的 archive 文件。
-- 角色窗口对话保存为讨论记录。用户提到相关讨论时，先读取对应 discussion，再将本次确认的结论写入文件或正式派单。
-- 数据检索和样本理解交给 data_search 阶段，主控按需定向核对；文献阶段聚焦文献。
-- 资源库使用 battery_resources：search 检索说明与登记路径，read 读取 resource_id，inspect 检查真实数据文件结构。
-- 用户提到的数据集先在资源库查证，结合领域、来源、字段和路径识别；多个版本按任务匹配度选择并记录依据。
-- 使用 inspect_compute 核对算力。预测实验的基础代码由 experiment_bridge 阶段通过模板工具准备；主控提供任务和已核实的数据路径，已有可用实现时沿用。
+- role_cli 查询 list、status、history，当前项目已绑定。例如：history --role paper_writer --channel discussion。按 next_offset/next_char_offset 续读，status 可查看 archive 路径。
+- 用户提到角色窗口讨论时，读取对应 discussion，将确认的结论用于文档和派单。
+- 文献梳理交给 literature，数据检索和样本理解交给 data_search，主控按需核对关键证据。
+- battery_resources 的 search 检索资源，read 读取 resource_id，inspect 查看真实数据结构。结合登记信息、来源、字段和路径选择适合任务的数据版本。
+- 用 inspect_compute 了解算力，向执行角色提供任务、数据路径和资源条件。
 
 ## 8. 面向用户的表达
-- 耗时操作前和获得关键结果后，用一两句说明当前目标、已核实发现和下一步。
-- 公开说明围绕可核查的进展和证据，不输出内部推理链。
-- 最终用中文简要说明完成内容、证据位置、尚缺内容和下一步，区分已执行结果与后续计划。
+- 耗时操作前和获得关键结果后，简要说明目标、发现和下一步。
+- 围绕可核查的进展、证据和研究取舍交流。
+- 最终用中文说明完成内容、证据位置、尚缺内容和下一步，区分实际结果与后续计划。
+
+## 9. 代码设计与实验执行
+- 代码实现遵循资源库 `代码和绘图指南/代码设计`，由 experiment_bridge 根据研究方案和实验计划完成。
+- 基于项目模板扩展模型、数据处理和任务逻辑，复用训练、验证、checkpoint 和结果导出流程；具体模块设计由执行角色确定。
+- 实验参数与计算资源按指南和当前计划配置，通过 run_experiments 组织训练、评估和后处理，结合实际结果推进研究。
 """.format(workflow_order=" → ".join(WORKFLOW_NODE_NAMES), **ROLE_DESCRIPTIONS)
 
 
@@ -146,6 +146,9 @@ class CoordinatorTurn:
     edited_paths: set[str] = field(default_factory=set)
     read_ledger: dict = field(default_factory=dict)
     invalid_batch: bool = False
+    request_kind: str | None = None
+    required_nodes: list[str] = field(default_factory=list)
+    receipts: dict[str, dict] = field(default_factory=dict)
 
     def accept_result(self, status, error=None):
         self.status, self.error = status, error
@@ -186,7 +189,7 @@ class CoordinatorAgent(AgentLoop):
         self.worker_max_iterations = worker_max_iterations
         self.timeout, self.mode = timeout, mode
         self.max_assignments = max_assignments if max_assignments is not None else (
-            len(WORKFLOW_NODE_NAMES) + 2 if mode == 'auto' else 6)
+            len(WORKFLOW_NODE_NAMES) + 8 if mode == 'auto' else 6)
         if max_iterations is None:
             max_iterations = 4 * len(WORKFLOW_NODE_NAMES) + 8 if mode == 'auto' else 24
         if mode not in {"auto", "expert"} or self.max_assignments < 1 or context_max_tokens < 1000:
@@ -205,12 +208,14 @@ class CoordinatorAgent(AgentLoop):
     def _registered_tools(self):
         """Select exposed capabilities; AgentLoop derives parameter schemas from handlers."""
         return tuple(spec for spec in BUILTIN_TOOLS if spec.name in {
-            'battery_resources', 'find',
+            'battery_resources', 'find', 'extract_writing_card',
+            'search_writing_cards', 'read_writing_card',
         }) + (
             ToolSpec("role_cli", "只读查询角色：仅支持list/status/history。参数command是命令文本，无需--project。执行任务使用delegate_stage，Wiki整理使用curate_wiki。", self._role_cli, True),
             ToolSpec("get_project_context", "读取最新项目状态、产物目录和阶段任务。", self._context, True),
             ToolSpec("inspect_compute", "只读检查当前执行环境的CPU、CUDA/MPS可用性和项目计算限制。", self._inspect_compute, True),
             ToolSpec("set_research_goal", "依据用户明确的研究需求记录项目总目标goal；可整合此前的澄清答案。仅设置目标，不派单、不增加用户确认。", self._set_research_goal),
+            ToolSpec("set_request_scope", "记录本次请求类型：discussion问答、document文档修改、execution执行。nodes列出本次需要完成的执行阶段（Wiki用wiki）；问答和文档修改为空。", self._set_request_scope),
             ToolSpec("read_project_file", "读取项目中的文本产物。offset和limit均以字符计数，不是行数；默认读取12000字符，单次最多20000字符。通常只需提供真实path；需要续读时使用返回的next_offset。普通read工具才按行读取。", self._read, True),
             ToolSpec("edit_project_markdown", "主控直接落实用户要求：先读文件，再以path、old_text、new_text精确替换一处Markdown。node为所属工作流节点。修改不会批准或派单。", self._edit_markdown),
             ToolSpec("review_checkpoint", "主控理解待审产物后更新面向用户的summary、questions及可选decision_options；沿用当前检查点，不批准、不派单。", self._review_checkpoint),
@@ -242,11 +247,15 @@ class CoordinatorAgent(AgentLoop):
     def _context(self, ctx) -> ToolResult:
         value = project_context({"path": str(self.project), "name": self.project.name})
         value["phase_roles"] = {node: stage.role for node, stage in BY_NODE.items()}
+        from batteryscientist.tools.profiles import PHASE_TOOL_NAMES
+        value['phase_tools'] = {node: sorted(PHASE_TOOL_NAMES[stage.phase])
+                                for node, stage in BY_NODE.items()}
         value["decision"] = self._load_decision()
         from batteryscientist.agent.runtime.questions import UserQuestions
         value['pending_questions'] = UserQuestions(self.project).pending()
         value["research_goal"] = self.project_goal or value["research_goal"]
         value['mode'] = self.mode
+        value['dispatch_budget'] = self._dispatch_budget()
         value['battery_resource_roots'] = [str(path) for path in self.knowledge_roots]
         value['compute_policy'] = load_compute_config(self.project)
         value['execution_policy'] = load_execution_config(self.project)
@@ -263,13 +272,43 @@ class CoordinatorAgent(AgentLoop):
         goal = goal.strip()
         if not goal:
             raise ValueError('研究目标不能为空')
-        saved_goal = read_json(self.project / 'workflow-state.json', {}).get('project_goal')
-        if saved_goal and saved_goal != goal:
-            raise ValueError('已有工作流的研究目标不能由对话替换；请通过现有方案修订流程调整研究内容')
+        from batteryscientist.agent.runtime.execution import project_write_lock
+        with project_write_lock(self.project):
+            path = self.project / 'workflow-state.json'
+            if path.exists():
+                saved = read_json(path, {})
+                saved['project_goal'] = goal
+                _write_json(path, saved)
         session, data = self._active.session, self._active.data
         self.project_goal = data['project_goal'] = goal
         session.save(data)
         return ToolResult(json.dumps({'project_goal': goal}, ensure_ascii=False))
+
+    def _set_request_scope(self, ctx, kind: str, nodes: list[str] | None = None) -> ToolResult:
+        nodes = list(dict.fromkeys(nodes or []))
+        if kind not in {'discussion', 'document', 'execution'}:
+            raise ValueError('kind应为discussion、document或execution')
+        if any(node not in {*WORKFLOW_NODE_NAMES, 'wiki'} for node in nodes):
+            raise ValueError('nodes应使用工作流阶段名称或wiki')
+        if (kind == 'execution') != bool(nodes):
+            raise ValueError('execution需要列出执行阶段；discussion和document的nodes为空')
+        if self.turn.request_kind and (kind != self.turn.request_kind or nodes != self.turn.required_nodes):
+            raise ValueError('本次请求范围已记录，按当前范围继续完成')
+        self.turn.request_kind, self.turn.required_nodes = kind, nodes
+        return ToolResult(json.dumps({'kind': kind, 'nodes': nodes}, ensure_ascii=False))
+
+    def _dispatch_budget(self):
+        return {'limit': self.max_assignments, 'used': self.turn.assignments,
+                'remaining': max(0, self.max_assignments - self.turn.assignments)}
+
+    async def _request_model(self, state, schemas, working_context):
+        marker = '\n本轮执行状态：'
+        state.messages[0]['content'] = state.messages[0]['content'].split(marker)[0] + marker + json.dumps({
+            'dispatch_budget': self._dispatch_budget(), 'request_kind': self.turn.request_kind,
+            'required_nodes': self.turn.required_nodes, 'receipts': self.turn.receipts,
+            'stop_reason': self.turn.stop_reason,
+        }, ensure_ascii=False)
+        return await super()._request_model(state, schemas, working_context)
 
 
     def _curate_wiki(self, ctx, paper_path: str = "paper/main.pdf", project_evidence: bool = False,
@@ -290,11 +329,13 @@ class CoordinatorAgent(AgentLoop):
                 self.project, 'wiki', task_instruction, kind='wiki', role='wiki_agent',
                 project_goal=self.project_goal or '', paper_path=paper_path,
                 project_evidence=project_evidence, source_paths=source_paths, force=force,
-                model=self.worker_model, timeout=self.timeout, max_iterations=self.worker_max_iterations,
+                model=role_model('wiki_agent', self.worker_model), timeout=self.timeout, max_iterations=self.worker_max_iterations,
                 interaction_mode=self.mode, on_event=self._worker_event)
             result = state.wiki_result or {'status': state.status, 'error': state.error}
             if not project_evidence:
                 self.turn.accept_result(state.status, state.error)
+            self.turn.receipts['wiki'] = result
+            result['dispatch_budget'] = self._dispatch_budget()
             self._progress('archive_end', **result)
             return ToolResult(json.dumps(result, ensure_ascii=False), state.status != 'completed')
         except Exception as exc:
@@ -307,6 +348,19 @@ class CoordinatorAgent(AgentLoop):
             return ToolResult(json.dumps(result, ensure_ascii=False), True)
 
     def _complete_research(self):
+        if not self.turn.request_kind:
+            raise ArtifactValidationError('请用set_request_scope记录本次请求类型和需要完成的阶段。')
+        if self.turn.status == 'completed' and not self.turn.stop_reason:
+            missing = [node for node in self.turn.required_nodes
+                       if self.turn.receipts.get(node, {}).get('status') != 'completed']
+            if missing:
+                if self.turn.assignments >= self.max_assignments:
+                    self.turn.pause('Assignment budget exhausted', status='partial')
+                else:
+                    raise ArtifactValidationError('本次执行尚未完成，请继续派单：' + '、'.join(missing)
+                                                  + '。当前派单余额：' + str(self._dispatch_budget()['remaining']))
+            if self.turn.request_kind == 'document' and not self.turn.edited_paths:
+                raise ArtifactValidationError('本次文档修改尚未落实，请更新对应文件。')
         if self.turn.archive_due:
             raise ArtifactValidationError('完整研究已完成，请调用 curate_wiki(project_evidence=true) 沉淀成果后交付总结。')
 
@@ -481,13 +535,25 @@ class CoordinatorAgent(AgentLoop):
         if not count_assignment:
             return
         if self.turn.assignments >= self.max_assignments:
-            self.turn.pause("Assignment budget exhausted")
+            self.turn.pause("Assignment budget exhausted", status='partial')
             raise ValueError(self.turn.stop_reason)
         self.turn.assignments += 1
 
     def _delegate(self, ctx, assignment: dict) -> ToolResult:
         task = StageAssignment.model_validate(assignment)
-        if self.stage_task and (
+        from batteryscientist.tools.profiles import PHASE_TOOL_NAMES
+        available = PHASE_TOOL_NAMES[BY_NODE[task.node].phase]
+        missing = sorted(set(task.required_tools) - available)
+        if missing:
+            return ToolResult(
+                f"未启动任务：阶段 {task.node} 缺少工具 {', '.join(missing)}。"
+                "工具权限由阶段决定，切换角色或用户再次授权不会增加工具。"
+                "请改派到具备所需工具的阶段，局部任务保持 full_stage=false 和原任务范围。", True)
+        improvement_revision = (self.stage_task and self.stage_task.node == 'improvement'
+                                and not task.full_stage
+                                and read_json(self.project / 'workflow-state.json', {})
+                                .get('improvement_checkpoint', {}).get('stage') == 'revision')
+        if self.stage_task and not improvement_revision and (
                 task.node != self.stage_task.node or task.role != self.stage_task.role
                 or task.full_stage != self.stage_task.full_stage):
             raise ValueError("Execution must match the user's explicit assignment")
@@ -509,7 +575,7 @@ class CoordinatorAgent(AgentLoop):
         state = execute_stage(self.project, task.node, task.instruction,
                              revise=self.turn.checkpoint_revision, project_goal=self.project_goal or "",
                              full_stage=task.full_stage,
-                             role=task.role, model=self.worker_model,
+                             role=task.role, model=role_model(task.role, self.worker_model),
                              mode=None if self.turn.checkpoint_revision else self.mode,
                              timeout=self.timeout, max_iterations=self.worker_max_iterations,
                              on_event=self._worker_event, workflow_stop_after=self.stop_after,
@@ -526,12 +592,20 @@ class CoordinatorAgent(AgentLoop):
                   "checkpoint": {key: checkpoint[key] for key in
                                  ("node", "status", "summary", "questions", "decision_options")
                                  if key in checkpoint} if checkpoint else None}
+        if task.full_stage:
+            handoff = state.node_results.get(task.node, {}).get('review_handoff')
+            if handoff:
+                result['review_handoff'] = handoff
         self.turn.accept_result(state.status, state.error)
+        self.turn.receipts[task.node] = dict(result)
+        result['dispatch_budget'] = self._dispatch_budget()
         if (task.full_stage and task.node == 'improvement' and state.status == 'completed' and
                 not self.stage_task and self.stop_after in (None, 'improvement')):
             self.turn.archive_due = True
             result['research_memory'] = 'Call curate_wiki(project_evidence=true) before summarizing.'
-        if state.status == 'completed' and (self.stage_task or self.stop_after == task.node and not self.turn.archive_due):
+        explicit_task_done = (self.stage_task and task.node == self.stage_task.node
+                              and task.full_stage == self.stage_task.full_stage)
+        if state.status == 'completed' and (explicit_task_done or self.stop_after == task.node and not self.turn.archive_due):
             self.turn.stop_reason = "The explicitly assigned stage has ended; summarize and stop."
         self._progress("assignment_end", node=task.node, role=task.role, **result)
         return ToolResult(json.dumps(result, ensure_ascii=False), state.status in {"failed", "interrupted"})
@@ -591,7 +665,16 @@ class CoordinatorAgent(AgentLoop):
             raise ValueError("Submit at most one critical operation per model response")
         try:
             ctx = ToolContext(self.project, self.skill_dirs, self.knowledge_roots)
-            return await asyncio.to_thread(spec.handler, ctx, **arguments)
+            result = await asyncio.to_thread(spec.handler, ctx, **arguments)
+            result.metadata['dispatch_budget'] = self._dispatch_budget()
+            try:
+                output = json.loads(result.output)
+            except (ValueError, TypeError):
+                output = None
+            if isinstance(output, dict):
+                output['dispatch_budget'] = self._dispatch_budget()
+                result.output = json.dumps(output, ensure_ascii=False)
+            return result
         except asyncio.CancelledError:
             # asyncio's first SIGINT cancels the coroutine. Release any question
             # wait in the executor before asyncio.run joins its worker threads.
@@ -649,7 +732,8 @@ class CoordinatorAgent(AgentLoop):
         if not prompt.strip():
             raise ValueError("Main assignment must not be empty")
         if self.model is None:
-            self.model = ModelClient(model=self.worker_model, timeout=self.timeout)
+            self.model = ModelClient(model=role_model('main', self.worker_model),
+                                     **role_connection('main'), timeout=self.timeout)
         self.project.mkdir(parents=True, exist_ok=True)
         saved = read_json(self.project / "workflow-state.json", {})
         from .workflow_cli import checkpoint_snapshot, is_approval
@@ -682,6 +766,9 @@ class CoordinatorAgent(AgentLoop):
                     archive_due=archive_completed, approval_snapshot=self.turn.approval_snapshot,
                     checkpoint_revision=self.turn.checkpoint_revision,
                     approve_revision=self.turn.approve_revision)
+                if self.stage_task:
+                    self.turn.request_kind = 'execution'
+                    self.turn.required_nodes = [self.stage_task.node]
                 decision = self._load_decision()
                 if decision.get('status') == 'awaiting_user':
                     self.turn.status = 'awaiting_user'
@@ -690,22 +777,20 @@ class CoordinatorAgent(AgentLoop):
                     "mode": self.mode, "workflow_state_path": "workflow-state.json",
                     "project_config_path": "project-config.json",
                 }, ensure_ascii=False)
-                context += f"\n本次用户任务执行预算：最多 {self.max_assignments} 次串行派单；该额度跨本次所有模型响应计算，并非每次只允许一个阶段。"
+                context += '\n派单次数按本次请求重新计数，以本轮执行状态和工具回执中的dispatch_budget为准。'
                 if recovered_results:
-                    context += ("\n上次中断有工具结果未写入对话。先核对当前状态、实际文件和原任务回执，"
-                                "复用已完成工作，再按本次授权继续。派单会核对未结束的执行任务。")
+                    context += "\n上次中断有待恢复的工具结果，请结合当前状态、文件和任务回执复用已有工作并继续。"
                 if self.first_node:
                     context += f"\n本次从 {self.first_node} 阶段开始，逐节点分配并验收。"
                 if self.stop_after:
-                    context += f"\n用户授权的最后阶段为 {self.stop_after}，完成后停止，不得派发后续节点。"
+                    context += f"\n本次任务到 {self.stop_after} 阶段结束，完成后总结。"
                 if self.stage_task:
-                    context += "\n本次唯一授权的任务（角色、阶段能力、完整阶段标记及任务范围不得替换或扩展；可补充细节，完成后总结并停止）：\n" + json.dumps(
+                    context += "\n本次指定任务（按给定角色、阶段和范围执行，可补充实现细节，完成后总结）：\n" + json.dumps(
                         {"delegate_stage": self.stage_task.model_dump()}, ensure_ascii=False)
-                request = ("遵循上述项目总目标中本次用户请求的执行范围。先判断是讨论、查询还是执行；"
-                           "仅讨论或查询时不要派单；需要执行时逐项验收并推进。"
+                request = ("根据本次用户请求，讨论和查询直接回答，执行任务通过派单完成并推进。"
                            if prompt == self.project_goal else prompt)
                 if self.stage_task and prompt == self.stage_task.instruction:
-                    request = "执行本次唯一授权的阶段任务，验收并总结后停止。"
+                    request = "完成本次指定的阶段任务，检查产物并总结。"
                 result = self.run(request, system_prompt=SYSTEM + "\n" + self.research_memory_skill + "\n当前项目：\n" + context
                                   + interaction_instructions(self.mode),
                                   phase="coordinator", history=history, completion_check=self._complete_research)
@@ -713,9 +798,16 @@ class CoordinatorAgent(AgentLoop):
                     raise RuntimeError("Main agent did not execute the explicit assignment")
                 if not result.final.strip():
                     raise RuntimeError("Main agent returned an empty summary")
-                task.update(status=self.turn.status, final=result.final, error=self.turn.error)
+                outcome = ('execution_completed' if self.turn.request_kind == 'execution' else
+                           'document_updated' if self.turn.request_kind == 'document' else 'answered')
+                if self.turn.status != 'completed':
+                    outcome = self.turn.status
+                task.update(status=self.turn.status, final=result.final, error=self.turn.error,
+                            outcome=outcome, request_kind=self.turn.request_kind,
+                            required_nodes=self.turn.required_nodes, receipts=self.turn.receipts,
+                            dispatch_budget=self._dispatch_budget())
                 return SimpleNamespace(status=self.turn.status, error=self.turn.error,
-                                       final=result.final, task_id=task["id"], session_id=data["session_id"])
+                                       final=result.final, outcome=outcome, task_id=task["id"], session_id=data["session_id"])
         finally:
             self._active = None
 

@@ -1,7 +1,7 @@
 # 可扩展预测实验模板
 
 所有输入协议共用 `run.py → exp/experiment.py` 的训练、检查、验证、checkpoint 恢复和结果导出。
-研究模型、数据及统计口径在对应模块实现；IC2ML 是其中一个具体实现。
+研究模型、数据及统计口径在对应模块实现；tempalte 是其中一个具体实现。
 
 先读 [EXPERIMENT_GUIDE.md](EXPERIMENT_GUIDE.md) 中的数据划分、输入信息、选型与评价约定，
 再按 [BASELINES.md](BASELINES.md) 选择公平对比。准备工具生成项目固定电芯名单
@@ -11,7 +11,7 @@
 
 | adapter | 输入 | 示例模型 | 标签及适用协议 |
 | --- | --- | --- | --- |
-| `cell_curves`（电芯默认） | 多周期电压/电流/容量曲线 | IC2ML | 保留 BatteryLife 原有早期窗口、寿命标签资格筛选；支持 life/soh/trajectory/rul |
+| `cell_curves`（电芯默认） | 多周期电压/电流/容量曲线 | tempalte | 保留 BatteryLife 原有早期窗口、寿命标签资格筛选；支持 life/soh/trajectory/rul |
 | `soh_sequence` | 历史周期容量除以额定容量的 SOH 序列 | SOHLinear | 未来 SOH trajectory；不需要寿命标签或充放电曲线 |
 
 自带持久性、OLS趋势、线性、MLP和小型TCN基线；它们不代表研究方法已实现。新增模型时，在
@@ -19,7 +19,7 @@
 SOH 序列模型输入为 `[batch, context]`，输出为 `[batch, horizon]`。
 模型可以定义 `validate_config(args)` 静态方法和 `config_keys` 元组；前者验证模型参数，
 后者标明 checkpoint 恢复必须一致的模型配置。新参数在 `configuration.py` 声明。
-IC2ML 的维度和曲线长度限制只用于 IC2ML。
+tempalte 的维度和曲线长度限制只用于 tempalte。
 
 ## 历史 SOH 预测示例
 
@@ -56,6 +56,7 @@ SOH 加载器按原始循环编号排序，逐周期取有限放电容量的最�
 
 ## 采样、损失、评价及选型
 
+- 正式训练默认 `min_epochs=100`、`max_epochs=300`、`patience=50`；达到最少轮数后按验证指标早停，并恢复最佳 checkpoint。短程检查可显式设置较小的 `min_epochs` 和 `max_epochs`。命令行 `--train_epochs` 仍可作为 `--max_epochs` 的别名。
 - `sampling=window`：窗口均匀；`cell_balanced`：有放回采样，每个电池的预期采样权重相同。
   自定义数据加载器可以提供自己的 sampler。
 - `loss=MSE/MAE/Huber`：默认按观测元素计算损失；研究损失在 adapter 的 `loss_parts`
@@ -86,4 +87,4 @@ cd batteryscientist/templates/prediction
 python -m pytest tests -q
 ```
 
-测试覆盖 IC2ML、电解液与 SOH 序列。它们验证实现语义，不代表模型在真实研究数据上有效。
+测试覆盖 tempalte、电解液与 SOH 序列。它们验证实现语义，不代表模型在真实研究数据上有效。

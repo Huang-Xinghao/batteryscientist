@@ -22,10 +22,10 @@ from batteryscientist.tools import (ToolContext, ToolResult, ToolSpec,
                                 builtin_tools, tools_for_phase)
 
 
-from batteryscientist.integrations.model import ModelClient, ToolCall, load_env_file
+from batteryscientist.integrations.model import ModelClient, ToolCall, load_env_file, role_model, role_connection
 from batteryscientist.agent.runtime.sessions import PhaseTask, RoleSession
 from .context import CONTEXT_MAX_TOKENS, WorkingContext
-from .stages import SKILL_BY_PHASE, WORKFLOW_NODE_NAMES, ROLE_DESCRIPTIONS
+from .stages import SKILL_BY_PHASE, WORKFLOW_NODE_NAMES, ROLE_DESCRIPTIONS, PHASE_ROLES
 
 __all__ = ["AgentLoop", "PhaseAgent", "AgentState", "ArtifactValidationError", "ToolCall", "tool_schema", "main"]
 
@@ -282,7 +282,12 @@ class AgentLoop:
                 on_compacting=lambda: event_loop.call_soon_threadsafe(self._context_compaction_event, True, phase, iteration))
             if state.context_memory is not previous_memory:
                 self._save_conversation(state)
-            self._progress("context_prepared", phase=phase, iteration=iteration)
+            image_count = sum(
+                block.get('type') == 'image_url'
+                for message in request_messages if isinstance(message.get('content'), list)
+                for block in message['content'])
+            self._progress("context_prepared", phase=phase, iteration=iteration,
+                           image_count=image_count)
             stream_options = {}
             if isinstance(self.model, ModelClient):
                 stream_options = {
@@ -407,9 +412,14 @@ class PhaseAgent(AgentLoop):
         repo_root = Path(__file__).resolve().parents[2]
         load_env_file(repo_root / ".env")
         load_env_file(repo_root / ".env.example")
-        selected_model = model or os.environ.get("BATTERYSCIENTIST_MODEL", "gpt-4o")
-        self.model = model_client or ModelClient(selected_model, api_key=api_key,
-                                                 base_url=base_url, timeout=timeout)
+        self._model_fallback = model
+        self._owns_model = model_client is None
+        self._model_connection_defaults = dict(api_key=api_key, base_url=base_url)
+        self._model_timeout = timeout
+        model_role = assignment_role or PHASE_ROLES.get(phase)
+        selected_model = role_model(model_role, model)
+        self._model_connection = role_connection(model_role, **self._model_connection_defaults)
+        self.model = model_client or ModelClient(selected_model, **self._model_connection, timeout=timeout)
         self.skills_root = repo_root / "batteryscientist" / "skills"
         self.knowledge_root = Path(knowledge_root).resolve() if knowledge_root else None
         self.phase = phase
@@ -446,6 +456,15 @@ class PhaseAgent(AgentLoop):
     def configure(self, *, phase: str | None = None) -> None:
         if phase:
             self.phase = phase
+        if self._owns_model:
+            model_role = self.assignment_role or PHASE_ROLES.get(self.phase)
+            selected_model = role_model(model_role, self._model_fallback)
+            connection = role_connection(model_role, **self._model_connection_defaults)
+            if connection != self._model_connection:
+                self.model = ModelClient(selected_model, **connection, timeout=self._model_timeout)
+                self._model_connection = connection
+            else:
+                self.model.model = selected_model
         allowed = tools_for_phase(self.phase, tuple(self._tools.values()))
         selected_names = {spec.name for spec in allowed} | {
             name for name in self._custom_tools
@@ -556,30 +575,26 @@ class PhaseAgent(AgentLoop):
 
     def _system_prompt(self) -> str:
         from batteryscientist.project_config import interaction_instructions
-        return (f"你是研究项目的执行 Agent。当前阶段：{self.phase}。\n"
-                + (f"当前角色：{self.role}。{ROLE_DESCRIPTIONS[self.role]}\n" if self.role else "")
-                + "按本次派单和当前 Skill 自行读取所需材料、完成交付；完成派单后停止，不自行推进下游阶段。"
-                  "历史会话和角色窗口的讨论不构成本次执行授权。审批由主控接收，不自行批准。"
-                  "使用当前已注册的工具；未获工具结果证实的操作不得声称已完成。\n"
-                  "每次工具调用解决一个当前未确定的问题；已有结果及产物未变化时复用。"
-                  "失败先判断参数、环境或执行原因，修正后再调用，不原样重复；"
-                  "只在源码或输入变化、前次失败或仍有未解决问题时重新生成、编译或查看同一产物。\n"
-                + "交付文件由本次任务决定，不为通过阶段检查创建无关文件。完成文件任务后用 submit_delivery 登记本次产物，主文件在前。可修复的本次缺项继续完成；确实无法完成时用status=partial，并用remaining简述缺项及原因，不另建交接文件。\n"
-                + ("Wiki任务的write/edit只允许当前wiki_prepare返回的暂存目录中的draft*.json；"
-                   "发布使用wiki_publish，交付回执由工具生成，不另写wiki-delivery.json。\n"
-                   if self.phase == 'wiki' else "")
-                + ("实验结果报告保持为当前完整状态；更新前需要保留的旧版本移到refine-logs/archives，"
-                   "不要在同一报告追加互相矛盾的新旧状态。审阅修复情况简短补在现有CODE_REVIEW.md末尾，"
-                   "说明处理及验证依据；无须另写关闭清单，不以PASS作为机械完成条件。\n"
-                   if self.phase == 'experiment_bridge' else "")
-                + self._skill_prompt()
-                + ("\n本次是普通任务：Skill仅提供方法参考，不要求执行完整阶段。"
-                   "以本次派单的目标、范围和交付要求为准，先读已有文件，再按需修改。"
-                   "不补交无关文档、不重做整套产物、不自行启动额外实验、审稿或下游阶段。"
-                   "需要编译或检查时按指令使用工具并验证真实结果，最后报告修改、产物路径和限制。\n"
-                   if not self.full_stage else "")
-                + "\n优先复用已有证据，围绕当前缺口检索，满足本次交付要求后停止。\n"
-                + interaction_instructions(self.interaction_mode))
+
+        parts = [f"你是研究项目的执行 Agent。当前阶段：{self.phase}。"]
+        if self.role:
+            parts.append(f"当前角色：{self.role}。{ROLE_DESCRIPTIONS[self.role]}")
+        parts.append("根据本次派单，遵循当前 Skill 和相关指南，读取材料、执行任务并交付结果。")
+        parts.append("先用 ls/find 定位实际文件，再读取内容；关键词查询用 grep，空结果表示未匹配。"
+                     "独立查询分别调用，依赖步骤串联执行，保留 stderr 便于定位错误；缺少的模型模块在代码阶段实现。")
+        if not self.full_stage:
+            parts.append(
+                "本次 full_stage=false，为局部任务；本次派单决定任务范围和完成标准。"
+                "下面的阶段 Skill 作为专业指导，只应用与本次任务相关的步骤；"
+                "面向完整阶段的全部输入清单、必须产物、整阶段验收和后续阶段安排不自动适用。"
+                "按需读取相关现有文件，复用有效结果，不因历史 partial 或旧待办扩展任务。"
+                "完成本次要求及必要验证后即可提交交付并总结，不自动推进下一阶段。"
+                "若缺项实际影响本次结果有效性，说明具体影响；科研真实性和相关专业规范仍须遵守。")
+        parts.append("完成后用 submit_delivery 登记实际产物；部分完成时设置 status=partial，"
+                     "在 remaining 说明缺项及原因。最后简要报告结果和产物路径。")
+        parts.append(self._skill_prompt())
+        parts.append(interaction_instructions(self.interaction_mode))
+        return "\n".join(parts)
 
     def run(self, prompt: str, *, system_prompt: str, phase: str,
             completion_check: Callable[[], None] | None = None,

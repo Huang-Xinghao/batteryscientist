@@ -3,7 +3,9 @@
   "adapter": "soh_sequence",
   "dataset": "HUST",
   "model": "SOHLinear",
-  "tasks": ["trajectory"],
+  "tasks": [
+    "trajectory"
+  ],
   "root_path": "./dataset",
   "context": 64,
   "horizon": 24,
@@ -13,8 +15,9 @@
   "selection_metric": "trajectory.rmse",
   "sampling": "cell_balanced",
   "batch_size": 128,
-  "train_epochs": 50,
-  "patience": 7,
+  "patience": 50,
   "learning_rate": 0.001,
-  "seed": 2021
+  "seed": 2021,
+  "min_epochs": 100,
+  "max_epochs": 300
 }

@@ -45,6 +45,12 @@ PHASE_TOOL_NAMES["paper_figure"] |= frozenset({
 for _phase in ("paper_figure", "paper_write", "paper_compile", "improvement"):
     PHASE_TOOL_NAMES[_phase] |= frozenset({"view_image"})
 
+PHASE_TOOL_NAMES["wiki"] |= frozenset({
+    "extract_writing_card", "search_writing_cards", "read_writing_card",
+})
+for _phase in ("literature", "paper_plan", "paper_write", "improvement"):
+    PHASE_TOOL_NAMES[_phase] |= frozenset({"search_writing_cards", "read_writing_card"})
+
 
 def tools_for_phase(phase: str, tools: tuple[ToolSpec, ...]) -> tuple[ToolSpec, ...]:
     """Return only tools allowed for a named workflow phase."""

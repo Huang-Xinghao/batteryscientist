@@ -13,6 +13,7 @@
 | 关系类型、论文关系和参考文献匹配 | `relations.py` |
 | 目录、元数据路径、页面读写和索引 | `storage.py` |
 | 模型提示词 | `prompts.py` |
+| 按需提取、检索和读取论文写作卡片 | `writing.py` |
 | 知识库维护命令 | `cli.py` |
 
 查询流程：`search.py` 调用 `retrieval.py` 或 `hybrid.py`，再读取选中条目。
@@ -26,3 +27,19 @@
 `WikiIngestion`。
 
 维护命令：`python -m batteryscientist.tools.wiki.cli --help`。
+
+写法分支独立于知识入库：`extract_writing_card(paper_id, focus, user_goal)` 复用已入库原文，
+用 wiki_agent 的模型配置生成卡片，校验来源 ID 与英文摘录后保存到
+`writing/<collection>/<paper_slug>/<focus>-<goal_hash>.json` 及同名中文 Markdown。
+同一来源和目标复用缓存；源文件变动后重新生成。`search_writing_cards` 支持词法检索，
+`read_writing_card` 返回完整分析、依据与过期状态。主控可直接提取，写作阶段仅检索读取。
+没有原文缓存时先整理入库，不根据 Wiki 摘要冒充原论文拆解。程序检查不替代语义审核。
+
+命令行示例（沿用仓库 `.env` 中的模型配置）：
+
+```bash
+python -m batteryscientist.tools.wiki.cli writing_card paper:example \
+  --focus introduction --user-goal '学习如何从场景约束引出方法'
+```
+
+`read_wiki` 会附带该论文已有写作卡片的路径；卡片不纳入科学证据的 Wiki 排名。

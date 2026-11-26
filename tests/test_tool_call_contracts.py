@@ -8,7 +8,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 
 from batteryscientist.agent.loop import tool_schema
-from batteryscientist.tools.core import ToolContext, ToolResult, bash, builtin_tools, read
+from batteryscientist.tools.core import ToolContext, ToolResult, bash, builtin_tools, find, grep, read
 from batteryscientist.tools.literature import search_papers
 from batteryscientist.tools.profiles import tools_for_phase
 from batteryscientist.tools.wiki.ingest import WikiIngestion
@@ -61,6 +61,43 @@ class ToolCallContracts(unittest.TestCase):
             expected = await bash(self.ctx, 'if false; then echo bad; else echo expected; fi')
             self.assertFalse(expected.is_error)
         asyncio.run(check())
+
+    def test_bash_failure_keeps_stderr_ahead_of_large_stdout_and_logs(self):
+        async def check():
+            result = await bash(self.ctx,
+                "printf 'diagnostic detail\\n' > run.log; "
+                "printf '%020000d' 0; printf 'missing model module\\n' >&2; exit 2")
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.metadata['returncode'], 2)
+            self.assertLessEqual(len(result.output), 12000)
+            self.assertIn('missing model module', result.output[:6000])
+            self.assertLess(result.output.index('Stderr'), result.output.index('Stdout'))
+            self.assertIn('Log tail (run.log)', result.output)
+            self.assertIn('diagnostic detail', result.output)
+            self.assertNotIn('view_image', result.output)
+            self.assertNotIn('preview', result.output)
+        asyncio.run(check())
+
+    def test_search_miss_is_success_and_independent_work_can_continue(self):
+        (self.root / 'report.md').write_text('Dataset inventory')
+        for result in [grep(self.ctx, 'gpu|budget', path='report.md'),
+                       find(self.ctx, '**/GRU.py')]:
+            self.assertFalse(result.is_error)
+            self.assertEqual(result.metadata['match_count'], 0)
+        result = asyncio.run(bash(self.ctx, "printf 'next query completed'"))
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.output, 'next query completed')
+        # Actual shell failure semantics remain intact; searches use their own tools.
+        result = asyncio.run(bash(self.ctx, "grep gpu report.md; touch should_not_run"))
+        self.assertTrue(result.is_error)
+        self.assertFalse((self.root / 'should_not_run').exists())
+
+    def test_search_invalid_path_or_expression_is_still_an_error(self):
+        (self.root / 'report.md').write_text('Dataset inventory')
+        for result in [grep(self.ctx, 'gpu', path='missing.md'),
+                       find(self.ctx, '*.py', path='missing-directory'),
+                       grep(self.ctx, '[', path='report.md')]:
+            self.assertTrue(result.is_error)
 
     def test_search_bounds_large_metadata(self):
         paper = {'title': 'Example', 'abstract': 'a' * 90000,

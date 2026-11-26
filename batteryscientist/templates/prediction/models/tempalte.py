@@ -76,9 +76,9 @@ class Model(nn.Module):
     @staticmethod
     def validate_config(args):
         if args.hidden_dim < 4 or args.hidden_dim % 2 or not 2 <= args.context <= args.early_cycle_threshold:
-            raise ValueError('IC2ML needs even hidden_dim >= 4 and 2 <= context <= early_cycle_threshold')
+            raise ValueError('tempalte needs even hidden_dim >= 4 and 2 <= context <= early_cycle_threshold')
         if args.charge_discharge_length < 4 or args.charge_discharge_length % 2:
-            raise ValueError('IC2ML charge_discharge_length must be even and >= 4')
+            raise ValueError('tempalte charge_discharge_length must be even and >= 4')
 
     def __init__(self, args):
         super().__init__()

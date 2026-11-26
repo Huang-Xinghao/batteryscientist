@@ -141,8 +141,8 @@ def execute_stage(project: Path, node: str, instruction: str, *, role: str, proj
     if paper_review_round2_timeout is not None:
         config = replace(config, paper_review_round2_timeout=paper_review_round2_timeout)
     if (node == "improvement" and saved is not None
-            and saved.status in {"failed", "running", "interrupted"}
-            and saved.improvement_checkpoint):
+            and saved.improvement_checkpoint
+            and saved.improvement_checkpoint.get("stage") != "completed"):
         config = replace(config, improvement_resume=True)
     if mode is not None:
         config = replace(config, mode=mode)
@@ -156,6 +156,10 @@ def execute_stage(project: Path, node: str, instruction: str, *, role: str, proj
     def event(kind: str, **details: Any) -> None:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         record = {"time": now, "kind": kind, **details}
+        if kind == 'user_question':
+            progress['status'] = 'awaiting_answer'
+        elif kind == 'user_question_answered':
+            progress['status'] = 'running'
         if kind == 'assistant_delta':
             if on_event is not None:
                 on_event(record)
@@ -415,6 +419,8 @@ def main() -> None:
                         help="round-two acceptance review timeout in seconds (default: 1200)")
     parser.add_argument("--improvement-start-round", type=int, choices=(1, 2), default=1,
                         help="resume improvement from a round; 2 preserves existing round-1 outputs")
+    parser.add_argument("--improvement-rounds", type=int, choices=(1, 2), default=1,
+                        help="number of independent paper review rounds (default: 1)")
     parser.add_argument("--start-node", help="start at a workflow node using verified project outputs")
     parser.add_argument("--stop-after", metavar="NODE", choices=WORKFLOW_NODE_NAMES,
                         help="stop after this workflow node completes")
@@ -439,6 +445,7 @@ def main() -> None:
                          model=args.model,
                          config=WorkflowConfig(start_node="literature",
                                                improvement_start_round=args.improvement_start_round,
+                                               improvement_rounds=args.improvement_rounds,
                                                paper_review_timeout=args.paper_review_timeout,
                                                paper_review_round2_timeout=args.paper_review_round2_timeout))
     state = run_coordinated_workflow(args.project, " ".join(args.prompt),

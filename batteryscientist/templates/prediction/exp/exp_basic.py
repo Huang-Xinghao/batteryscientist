@@ -1,13 +1,13 @@
 import os
 import torch
-from models import IC2ML
+from models import tempalte
 
 
 class Exp_Basic(object):
     def __init__(self, args):
         self.args = args
         self.model_dict = {
-            'IC2ML':IC2ML,
+            'tempalte':tempalte,
         }
         self.device = self._acquire_device()
         self.model = self._build_model().to(self.device)

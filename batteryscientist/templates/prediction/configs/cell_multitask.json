@@ -1,8 +1,12 @@
 {
   "domain": "cell",
   "dataset": "Tongji",
-  "model": "IC2ML",
-  "tasks": ["soh", "trajectory", "rul"],
+  "model": "tempalte",
+  "tasks": [
+    "soh",
+    "trajectory",
+    "rul"
+  ],
   "root_path": "/data/BatteryLife_Processed",
   "context": 10,
   "horizon": 50,
@@ -10,7 +14,8 @@
   "charge_discharge_length": 300,
   "hidden_dim": 256,
   "batch_size": 128,
-  "train_epochs": 100,
-  "patience": 10,
-  "seed": 2021
+  "patience": 50,
+  "seed": 2021,
+  "min_epochs": 100,
+  "max_epochs": 300
 }

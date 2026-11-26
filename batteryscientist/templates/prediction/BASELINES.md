@@ -30,7 +30,7 @@ python run.py --checkpoint results/tcn_seed17 --stage test --output_dir results/
 
 ## 其他输入协议
 
-- IC2ML：`cell_curves` 的容量曲线基线，支持原有电芯任务；不能替代只看历史 SOH 的公平比较。
+- tempalte：`cell_curves` 的容量曲线基线，支持原有电芯任务；不能替代只看历史 SOH 的公平比较。
 - CompositionMLP：`electrolyte` 的配方特征 MLP 基线，不是 Bamboo-mixer 架构。
 
 新增 baseline 应复用对应 adapter、划分、预处理及指标。若输入信息或任务不同，明确另设实验。

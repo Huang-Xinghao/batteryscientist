@@ -387,6 +387,12 @@ def detail(project, terminal_paths=None):
         (project['id'], latest['id'])) if latest and status in ACTIVE else []
     last_event = ({**last_events[0], 'data': json.loads(last_events[0]['data'])}
                   if last_events else None)
+    # A live worker can be suspended inside request_user_decision. Keep its
+    # management run active for locking/stop, but expose the actual wait to users.
+    agent_status = status
+    if status in {'queued', 'running', 'external_running'} and pending_questions:
+        status = 'awaiting_answer'
+        progress['status'] = status
     return {
         **project,
         "status": status,
@@ -395,7 +401,7 @@ def detail(project, terminal_paths=None):
         "runs": runs,
         "checkpoint_token": checkpoint_token(project, state),
         "pending_questions": pending_questions,
-        "agents": agent_views(project['path'], status, state, pending_questions, last_event),
+        "agents": agent_views(project['path'], agent_status, state, pending_questions, last_event),
     }
 
 

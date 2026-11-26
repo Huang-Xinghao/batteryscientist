@@ -13,7 +13,8 @@ from batteryscientist.integrations.model import record_usage
 from batteryscientist.storage import atomic_bytes
 
 
-def generate(project: Path, prompt: str, output_path: str, *, size: str, quality: str) -> dict:
+def generate(project: Path, prompt: str, output_path: str, *, size: str, quality: str,
+             image_path: str | None = None) -> dict:
     project = project.resolve()
     output = (project / output_path).resolve()
     figures = (project / 'figures').resolve()
@@ -21,6 +22,17 @@ def generate(project: Path, prompt: str, output_path: str, *, size: str, quality
         raise ValueError('output_path must name a PNG under project figures/')
     if not prompt.strip():
         raise ValueError('prompt is required')
+    source = None
+    if image_path:
+        source = (project / image_path).resolve()
+        if not source.is_relative_to(project) or not source.is_file():
+            raise ValueError('image_path must name an existing image inside the project')
+        if source == output:
+            raise ValueError('Use a different output_path to preserve the input image')
+        with Image.open(source) as image:
+            if image.format not in {'PNG', 'JPEG', 'WEBP'}:
+                raise ValueError('image_path must be a PNG, JPEG or WEBP image')
+            image.verify()
     api_key = os.environ.get('BATTERYSCIENTIST_IMAGE_API_KEY') or os.environ.get('BATTERYSCIENTIST_API_KEY')
     if not api_key:
         raise ValueError('Configure BATTERYSCIENTIST_IMAGE_API_KEY or BATTERYSCIENTIST_API_KEY')
@@ -29,7 +41,12 @@ def generate(project: Path, prompt: str, output_path: str, *, size: str, quality
                     base_url=os.environ.get('BATTERYSCIENTIST_IMAGE_BASE_URL') or os.environ.get('BATTERYSCIENTIST_BASE_URL'),
                     max_retries=0, timeout=600)
     with client:
-        response = client.images.generate(model=model, prompt=prompt, size=size, quality=quality)
+        if source is not None:
+            with source.open('rb') as image_file:
+                response = client.images.edit(model=model, image=image_file, prompt=prompt,
+                                              size=size, quality=quality)
+        else:
+            response = client.images.generate(model=model, prompt=prompt, size=size, quality=quality)
     record_usage(project, source='image', model=model, phase='paper_figure',
                  usage=getattr(response, 'usage', None))
     encoded = response.data[0].b64_json
@@ -41,4 +58,7 @@ def generate(project: Path, prompt: str, output_path: str, *, size: str, quality
             raise ValueError('Image API did not return a PNG')
         image.verify()
     atomic_bytes(output, content)
-    return {'status': 'completed', 'output_path': output.relative_to(project).as_posix(), 'model': model}
+    receipt = {'status': 'completed', 'output_path': output.relative_to(project).as_posix(), 'model': model}
+    if source is not None:
+        receipt['image_path'] = source.relative_to(project).as_posix()
+    return receipt

@@ -1,4 +1,4 @@
-"""IC2ML loaders backed by BatteryLife PKLs and fixed cell splits."""
+"""tempalte loaders backed by BatteryLife PKLs and fixed cell splits."""
 
 from data_provider.batterylife import BatteryLifeDataset, batterylife_trainloader
 

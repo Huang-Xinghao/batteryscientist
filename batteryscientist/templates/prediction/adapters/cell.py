@@ -10,9 +10,9 @@ from .base import PredictionAdapter
 
 class CellAdapter(PredictionAdapter):
     domain = 'cell'
-    default_model = 'IC2ML'
+    default_model = 'tempalte'
     default_tasks = ('soh', 'trajectory', 'rul')
-    compatible_models = ('IC2ML',)
+    compatible_models = ('tempalte',)
     config_keys = ('dataset', 'condition', 'context', 'horizon', 'hidden_dim',
                    'early_cycle_threshold', 'charge_discharge_length', 'dataaccess',
                    'eval_cycle_min', 'eval_cycle_max', 'seed', 'split_file', 'sampling', 'split_seed')

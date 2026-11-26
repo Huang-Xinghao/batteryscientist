@@ -1,4 +1,4 @@
-"""BatteryLife PKLs, published life labels and fixed cell-level splits for IC2ML."""
+"""BatteryLife PKLs, published life labels and fixed cell-level splits for tempalte."""
 
 from bisect import bisect_right
 import json
@@ -214,7 +214,7 @@ class BatteryLifeDataset(Dataset):
 def batterylife_trainloader(args, label_scaler=None):
     tasks = selected_tasks(args)
     if args.context < 2 or args.early_cycle_threshold < args.context:
-        raise ValueError('IC2ML requires 2 <= context <= early_cycle_threshold')
+        raise ValueError('tempalte requires 2 <= context <= early_cycle_threshold')
     if 'trajectory' in tasks and args.horizon < 1:
         raise ValueError('trajectory requires a positive horizon')
     if args.charge_discharge_length < 4 or args.charge_discharge_length % 2:

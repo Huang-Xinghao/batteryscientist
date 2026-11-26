@@ -29,7 +29,7 @@ def sequence(tmp_path):
     args = parse_args(['--adapter', 'soh_sequence', '--dataset', 'fixture', '--root_path', str(root),
                        '--split_file', str(split), '--context', '3', '--horizon', '2',
                        '--aggregation', 'cell_macro', '--selection_metric', 'trajectory.rmse',
-                       '--sampling', 'cell_balanced', '--batch_size', '4', '--train_epochs', '2',
+                       '--sampling', 'cell_balanced', '--batch_size', '4', '--min_epochs', '1', '--max_epochs', '2',
                        '--patience', '2', '--hidden_dim', '3', '--charge_discharge_length', '3',
                        '--early_cycle_threshold', '1', '--no-use_gpu', '--output_dir', str(tmp_path/'run')])
     return args, root, split, names

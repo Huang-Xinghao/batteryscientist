@@ -21,7 +21,7 @@ from batteryscientist.storage import write_json as _write_json
 
 def chat(project, role, prompt):
     """Discussion memory is isolated from the role's formal execution memory."""
-    from batteryscientist.integrations.model import ModelClient, load_env_file
+    from batteryscientist.integrations.model import ModelClient, load_env_file, role_model, role_connection
     load_env_file(Path(__file__).resolve().parents[3] / '.env')
     with (directory(project) / 'transport.lock').open('a') as lock:
         try:
@@ -34,7 +34,7 @@ def chat(project, role, prompt):
         with session.locked():
             data = session.load()
             history = session.recover_messages(data['messages'])
-            model = ModelClient(model=os.environ.get('BATTERYSCIENTIST_MODEL', 'gpt-4o'), timeout=120)
+            model = ModelClient(model=role_model(role), **role_connection(role), timeout=120)
             model.usage_workspace, model.usage_phase = project, 'role_chat'
             from batteryscientist.agent.context import CONTEXT_MAX_TOKENS
             history = session.compact(data, history, model, CONTEXT_MAX_TOKENS)

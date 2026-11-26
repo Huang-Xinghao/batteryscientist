@@ -19,7 +19,7 @@ def adjust_learning_rate(optimizer, epoch, args):
             10: 5e-7, 15: 1e-7, 20: 5e-8
         }
     elif args.lradj == "cosine":
-        lr_adjust = {epoch: args.learning_rate /2 * (1 + math.cos(epoch / args.train_epochs * math.pi))}
+        lr_adjust = {epoch: args.learning_rate /2 * (1 + math.cos(epoch / args.max_epochs * math.pi))}
     if epoch in lr_adjust.keys():
         lr = lr_adjust[epoch]
         for param_group in optimizer.param_groups:
@@ -28,7 +28,7 @@ def adjust_learning_rate(optimizer, epoch, args):
 
 
 class EarlyStopping:
-    def __init__(self, patience=7, verbose=False, delta=0):
+    def __init__(self, patience=50, verbose=False, delta=0):
         self.patience = patience
         self.verbose = verbose
         self.counter = 0
@@ -51,6 +51,7 @@ class EarlyStopping:
             self.best_score = score
             self.save_checkpoint(val_loss, model, path)
             self.counter = 0
+            self.early_stop = False
 
     def save_checkpoint(self, val_loss, model, path):
         if self.verbose:

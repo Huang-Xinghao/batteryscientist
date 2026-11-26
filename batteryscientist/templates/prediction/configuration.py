@@ -36,8 +36,9 @@ def parse_args(argv=None):
     parser.add_argument('--checkpoints', default='./checkpoint')
     parser.add_argument('--hidden_dim', type=int, default=256)
     parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--train_epochs', type=int, default=2000)
-    parser.add_argument('--patience', type=int, default=100)
+    parser.add_argument('--min_epochs', type=int, default=100)
+    parser.add_argument('--max_epochs', '--train_epochs', type=int, default=300)
+    parser.add_argument('--patience', type=int, default=50)
     parser.add_argument('--learning_rate', type=float, default=0.0001)
     parser.add_argument('--loss', choices=['MSE', 'MAE', 'Huber'], default='MSE')
     parser.add_argument('--task_weights', type=json.loads, default={})
@@ -47,7 +48,7 @@ def parse_args(argv=None):
     parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--use_gpu', action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument('--gpu', type=int, default=0)
-    # BatteryLife / IC2ML options.
+    # BatteryLife / tempalte options.
     parser.add_argument('--context', type=int, default=10)
     parser.add_argument('--horizon', type=int, default=50)
     parser.add_argument('--early_cycle_threshold', type=int, default=100)
@@ -70,15 +71,27 @@ def parse_args(argv=None):
 
     preliminary, _ = parser.parse_known_args(argv)
     known = {action.dest for action in parser._actions}
+
+    def epoch_options(values):
+        values = dict(values)
+        if 'train_epochs' in values:
+            legacy = values.pop('train_epochs')
+            if 'max_epochs' in values and values['max_epochs'] != legacy:
+                parser.error('train_epochs and max_epochs must agree when both are provided')
+            values['max_epochs'] = legacy
+        return values
+
     defaults = {}
     if preliminary.checkpoint:
         manifest = Path(preliminary.checkpoint) / 'data_manifest.json'
-        saved = json.loads(manifest.read_text())['arguments']
+        saved = epoch_options(json.loads(manifest.read_text())['arguments'])
         defaults.update({key: value for key, value in saved.items()
                          if key in known and key not in ('config', 'checkpoint', 'run_name', 'is_training', 'stage', 'itr')})
         defaults.update(is_training=0, itr=1)
     if preliminary.config:
         config = json.loads(Path(preliminary.config).read_text())
+        if isinstance(config, dict):
+            config = epoch_options(config)
         if not isinstance(config, dict) or set(config) - known:
             parser.error('Config must be a JSON object containing known option names')
         if set(config) & {'config', 'checkpoint'}:
@@ -129,8 +142,10 @@ def parse_args(argv=None):
     if any(isinstance(w, bool) or not isinstance(w, (int, float)) or not math.isfinite(w) or w <= 0
            for w in args.task_weights.values()):
         parser.error('Task weights must be finite and positive')
-    if min(args.hidden_dim, args.batch_size, args.train_epochs, args.patience, args.itr, args.fingerprint_dim) < 1:
+    if min(args.hidden_dim, args.batch_size, args.min_epochs, args.max_epochs, args.patience, args.itr, args.fingerprint_dim) < 1:
         parser.error('Dimensions, batch size, epochs, patience and itr must be positive')
+    if not args.min_epochs <= args.max_epochs <= 300:
+        parser.error('Epochs must satisfy min_epochs <= max_epochs <= 300')
     if args.num_workers < 0 or args.gpu < 0 or args.seed < 0 or args.split_seed < 0 or args.learning_rate <= 0:
         parser.error('Workers, device and seeds must be nonnegative; learning_rate must be positive')
     if args.use_amp or args.use_multi_gpu:

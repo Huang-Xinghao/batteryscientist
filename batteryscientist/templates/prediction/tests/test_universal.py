@@ -35,7 +35,7 @@ def electrolyte(tmp_path):
     args = parse_args(['--domain', 'electrolyte', '--root_path', str(path),
                        '--split_file', str(split_file), '--tasks', 'conductivity', 'anion_ratio',
                        '--hidden_dim', '8', '--fingerprint_dim', '8', '--batch_size', '3',
-                       '--train_epochs', '1', '--patience', '1', '--no-use_gpu',
+                       '--min_epochs', '1', '--max_epochs', '1', '--patience', '1', '--no-use_gpu',
                        '--checkpoints', str(tmp_path / 'checkpoints')])
     return path, records, args
 
@@ -163,10 +163,52 @@ def test_config_cli_override_and_incompatible_model(tmp_path):
     assert args.model == 'CompositionMLP' and args.batch_size == 4 and args.hidden_dim == 16
     assert setting_name(args) == setting_name(args)
     with pytest.raises(SystemExit):
-        parse_args(['--domain', 'electrolyte', '--model', 'IC2ML'])
+        parse_args(['--domain', 'electrolyte', '--model', 'tempalte'])
     config.write_text(json.dumps({'hidden_dim': 4.5}))
     with pytest.raises(SystemExit):
         parse_args(['--config', str(config)])
+
+
+def test_training_schedule_defaults_and_legacy_epoch_option(tmp_path):
+    args = parse_args([])
+    assert (args.min_epochs, args.max_epochs, args.patience) == (100, 300, 50)
+    assert args.model == 'tempalte'
+    args = parse_args(['--min_epochs', '1', '--train_epochs', '2'])
+    assert (args.min_epochs, args.max_epochs) == (1, 2)
+    config = tmp_path / 'legacy.json'
+    config.write_text(json.dumps({'min_epochs': 1, 'train_epochs': 2}))
+    args = parse_args(['--config', str(config), '--max_epochs', '3'])
+    assert args.max_epochs == 3
+
+
+@pytest.mark.parametrize('schedule,expected_epochs', [
+    ('stalled', 100), ('recovered', 140), ('improving', 300),
+])
+def test_training_respects_minimum_patience_and_maximum(electrolyte, monkeypatch, schedule, expected_epochs):
+    _, _, args = electrolyte
+    args.min_epochs, args.max_epochs, args.patience = 100, 300, 50
+    torch.set_num_threads(1)
+    exp = Experiment(args)
+    validations = 0
+
+    def epoch(_loader, optimizer=None):
+        nonlocal validations
+        if optimizer is not None:
+            return 1.0
+        validations += 1
+        if schedule == 'improving':
+            return 1.0 / validations
+        if schedule == 'recovered' and validations >= 90:
+            return 0.5 if validations == 90 else 0.75
+        return 1.0 if validations == 1 else 2.0
+
+    monkeypatch.setattr(exp, '_epoch', epoch)
+    exp.train('schedule')
+    history = json.loads((exp._directory('schedule') / 'training_history.json').read_text())
+    assert len(history) == validations == expected_epochs
+    checkpoint = torch.load(exp._directory('schedule') / 'checkpoint.pth', weights_only=True)
+    for key, value in exp.model.state_dict().items():
+        torch.testing.assert_close(value.cpu(), checkpoint[key].cpu())
 
 
 def test_staged_cli_output_directory_and_joinable_csv(electrolyte, tmp_path, monkeypatch):

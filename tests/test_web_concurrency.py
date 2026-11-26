@@ -69,6 +69,33 @@ class WebConcurrency(unittest.TestCase):
             self.assertEqual(self.start('0'), 409)
         self.assertEqual(self.spawn.call_count, 1)
 
+    def test_live_question_displays_wait_without_releasing_active_run(self):
+        from batteryscientist.agent.runtime.questions import UserQuestions
+
+        self.assertEqual(self.start('0'), 'queued')
+        project = self.projects['0']
+        questions = UserQuestions(project['path'])
+        question = questions.create('Which input?', role='experiment', task_id='task-1',
+                                    phase='experiment_bridge')
+        view = api.detail(project, terminal_paths=set())
+        self.assertEqual(view['status'], 'awaiting_answer')
+        self.assertEqual(view['progress']['status'], 'awaiting_answer')
+        self.assertEqual(view['runs'][0]['status'], 'queued')
+        self.assertEqual(self.start('0'), 409)
+        questions.answer(question['id'], 'Use current input')
+        self.assertEqual(api.detail(project, terminal_paths=set())['status'], 'queued')
+
+    def test_stopping_run_keeps_stopping_display_with_pending_question(self):
+        from batteryscientist.agent.runtime.questions import UserQuestions
+
+        self.assertEqual(self.start('0'), 'queued')
+        project = self.projects['0']
+        UserQuestions(project['path']).create('Which input?', role='experiment',
+                                              task_id='task-1', phase='experiment_bridge')
+        run = store.rows('SELECT id FROM runs WHERE project_id=?', ('0',))[0]
+        store.run_update(run['id'], status='stopping')
+        self.assertEqual(api.detail(project, terminal_paths=set())['status'], 'stopping')
+
 
 if __name__ == '__main__':
     unittest.main()

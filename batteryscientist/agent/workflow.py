@@ -65,6 +65,7 @@ class WorkflowConfig:
 
     start_node: str = "literature"
     improvement_start_round: int = 1
+    improvement_rounds: int = 1
     paper_review_timeout: float = 1800
     paper_review_round2_timeout: float = 1200
     improvement_resume: bool = False
@@ -102,6 +103,8 @@ class WorkflowRunner:
             raise ValueError("mode must be auto or expert")
         if self.config.improvement_start_round not in (1, 2):
             raise ValueError("improvement_start_round must be 1 or 2")
+        if self.config.improvement_rounds not in (1, 2):
+            raise ValueError("improvement_rounds must be 1 or 2")
         for name in ("paper_review_timeout", "paper_review_round2_timeout"):
             if not math.isfinite(getattr(self.config, name)) or getattr(self.config, name) <= 0:
                 raise ValueError(f"{name} must be finite and positive")
@@ -495,6 +498,7 @@ class WorkflowRunner:
 
         checkpoint = state.improvement_checkpoint if self.config.improvement_resume else {}
         start_round = checkpoint.get("round", self.config.improvement_start_round)
+        total_rounds = max(self.config.improvement_rounds, start_round)
         stage = checkpoint.get("stage", "review")
         if start_round not in (1, 2) or stage not in {"review", "revision", "compile", "completed"}:
             raise ValueError("Invalid improvement checkpoint")
@@ -513,61 +517,60 @@ class WorkflowRunner:
             if self.on_node_progress:
                 self.on_node_progress("improvement", state, state.improvement_checkpoint)
 
-        rounds = []
-        revision_files = []
         compiled_files = []
-        final = "论文两轮审稿、修订和编译完成。"
-        for round_number in range(start_round, 3):
-            report = Path(f"paper/review_round{round_number}.md")
-            if stage == "completed":
-                break
-            if stage not in {"revision", "compile"}:
-                inputs = set(paper_review_inputs(self._project))
-                timeout = (self.config.paper_review_timeout if round_number == 1
-                           else self.config.paper_review_round2_timeout)
-                instructions = (Path(__file__).resolve().parents[1] / "skills" /
-                                "auto-paper-improvement-loop" / "paper-review.md").read_text(encoding="utf-8")
-                progress(round_number, "review", timeout_seconds=timeout,
-                         stage_started_at=datetime.now(timezone.utc).isoformat())
-                review = ReviewRunner(self._project, timeout=timeout).run(ReviewRequest(
-                    kind="paper", instructions=(f"用户研究任务：{prompt}\n当前审稿轮次：{round_number}/2\n"
-                                                + instructions),
-                    inputs=tuple(sorted(inputs)), output=report, save_diagnostics=True))
-                if review.status != "completed":
-                    progress(round_number, "review", status=review.status,
-                             elapsed_seconds=review.elapsed_seconds, error=review.error)
-                    raise RuntimeError(f"Paper review round {round_number} did not complete: {review.error}")
-                progress(round_number, "revision")
-            self._require_file(str(report))
-            heading = f"## 第 {round_number} 轮原始审稿"
-            if heading not in log.read_text(encoding="utf-8"):
-                with log.open("a", encoding="utf-8") as stream:
-                    stream.write(f"\n{heading}\n\n" + (self._project / report).read_text(encoding="utf-8") + "\n")
-            iterations = 0
-            if stage != "compile":
-                result = self._go(
-                    f"{prompt}\n当前修改轮次：{round_number}/2；本轮审稿报告：{report}。"
-                    "运行器已完成本轮独立评审；本次只修订，不重复发起评审。"
-                    "本轮完成后由运行器重新编译。",
-                    phase="improvement")
-                iterations = result.iterations
-                revision_files = list(getattr(result, 'files', []))
-                final = getattr(result, 'final', final)
-                progress(round_number, "compile")
+        if stage in {"revision", "compile"}:
+            # The coordinator has collected revisions from the relevant roles.
+            progress(start_round, "compile")
             compiled = self._run_paper_compile(state, prompt)
             compiled_files = compiled.files
-            shutil.copy2(self._project / compiled.artifact, paper / f"main_round{round_number}.pdf")
-            rounds.append({"round": round_number, "review": str(report),
-                           "iterations": iterations})
-            progress(round_number + 1 if round_number == 1 else 2,
-                     "review" if round_number == 1 else "completed")
-            stage = "review"
-        files = list(dict.fromkeys([
-            "paper/main.pdf", "paper/main.tex", "paper/PAPER_IMPROVEMENT_LOG.md",
-            "paper/review_round1.md", "paper/review_round2.md",
-            *revision_files, *compiled_files,
-        ]))
-        return NodeResult(files, {"phase": "improvement", "rounds": rounds}, final)
+            shutil.copy2(self._project / compiled.artifact, paper / f"main_round{start_round}.pdf")
+            if start_round == total_rounds:
+                progress(start_round, "completed")
+                stage = "completed"
+            else:
+                start_round, stage = 2, "review"
+                progress(2, "review")
+
+        if stage == "completed":
+            return NodeResult(list(dict.fromkeys([
+                "paper/main.pdf", "paper/main.tex", "paper/PAPER_IMPROVEMENT_LOG.md",
+                *[f"paper/review_round{number}.md" for number in range(1, total_rounds + 1)],
+                *compiled_files,
+            ])), {"phase": "improvement"}, f"论文 {total_rounds} 轮审稿、主控派单修订和编译完成。")
+
+        round_number = start_round
+        report = Path(f"paper/review_round{round_number}.md")
+        inputs = set(paper_review_inputs(self._project))
+        timeout = (self.config.paper_review_timeout if round_number == 1
+                   else self.config.paper_review_round2_timeout)
+        instructions = (Path(__file__).resolve().parents[1] / "skills" /
+                        "auto-paper-improvement-loop" / "paper-review.md").read_text(encoding="utf-8")
+        progress(round_number, "review", timeout_seconds=timeout,
+                 stage_started_at=datetime.now(timezone.utc).isoformat())
+        review = ReviewRunner(self._project, timeout=timeout).run(ReviewRequest(
+            kind="paper", instructions=(f"用户研究任务：{state.project_goal or prompt}\n"
+                                        f"当前审稿轮次：{round_number}/{total_rounds}\n" + instructions),
+            inputs=tuple(sorted(inputs)), output=report, save_diagnostics=True))
+        if review.status != "completed":
+            progress(round_number, "review", status=review.status,
+                     elapsed_seconds=review.elapsed_seconds, error=review.error)
+            raise RuntimeError(f"Paper review round {round_number} did not complete: {review.error}")
+        content = self._require_file(str(report)).read_text(encoding="utf-8")
+        heading = f"## 第 {round_number} 轮原始审稿"
+        if heading not in log.read_text(encoding="utf-8"):
+            with log.open("a", encoding="utf-8") as stream:
+                stream.write(f"\n{heading}\n\n" + content + "\n")
+        progress(round_number, "revision")
+        next_action = (
+            f"第 {round_number} 轮独立审稿已完成，请主控读取报告，按意见向写作、绘图、实验等相关角色"
+            "派发局部修改任务（full_stage=false），收集修改结果并更新改进日志。"
+            "本轮修改交接完成后，再调用 full_stage=true 的 improvement 编译；"
+            + ("编译后完成交付。" if round_number == total_rounds else "编译后进入下一轮审稿。"))
+        return NodeResult([str(report), "paper/PAPER_IMPROVEMENT_LOG.md", *compiled_files], {
+            "phase": "improvement", "delivery_status": "partial", "remaining": next_action,
+            "review_handoff": {"round": round_number, "report": str(report),
+                               "content": content, "next_action": next_action},
+        }, next_action)
 
     def _next_node(self, node: str) -> str | None:
         return NEXT_NODE.get(node)

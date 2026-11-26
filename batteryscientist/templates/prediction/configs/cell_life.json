@@ -1,15 +1,18 @@
 {
   "domain": "cell",
   "dataset": "Tongji",
-  "model": "IC2ML",
-  "tasks": ["life"],
+  "model": "tempalte",
+  "tasks": [
+    "life"
+  ],
   "root_path": "/data/BatteryLife_Processed",
   "context": 10,
   "early_cycle_threshold": 100,
   "charge_discharge_length": 300,
   "hidden_dim": 256,
   "batch_size": 128,
-  "train_epochs": 100,
-  "patience": 10,
-  "seed": 2021
+  "patience": 50,
+  "seed": 2021,
+  "min_epochs": 100,
+  "max_epochs": 300
 }

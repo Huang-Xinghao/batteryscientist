@@ -194,7 +194,8 @@ def _execute(run_id):
                                              **options)
     output = data_root() / "runs" / run_id / "result.json"
     output.write_text(
-        json.dumps({"status": state.status, "error": state.error}), encoding="utf-8"
+        json.dumps({"status": state.status, "error": state.error,
+                    "outcome": getattr(state, 'outcome', None)}), encoding="utf-8"
     )
 
 

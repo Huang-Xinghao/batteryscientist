@@ -1,4 +1,4 @@
-"""Compatibility import for the previous IC2ML experiment entry point."""
+"""Compatibility import for the previous tempalte experiment entry point."""
 
 from .experiment import Experiment
 

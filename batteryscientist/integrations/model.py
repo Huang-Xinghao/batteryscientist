@@ -13,6 +13,24 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 
+def role_model(role: str | None, fallback: str | None = None) -> str:
+    """Resolve a role override, then the run's model and shared default."""
+    override = os.environ.get(f"BATTERYSCIENTIST_{role.upper()}_MODEL", "").strip() if role else ""
+    return override or fallback or os.environ.get("BATTERYSCIENTIST_MODEL") or "gpt-4o"
+
+
+def role_connection(role: str | None, *, api_key: str | None = None,
+                    base_url: str | None = None) -> dict[str, str | None]:
+    """Use the role's API credentials and endpoint, falling back to shared settings."""
+    prefix = f"BATTERYSCIENTIST_{role.upper()}_" if role else "BATTERYSCIENTIST_"
+    return {
+        'api_key': os.environ.get(prefix + 'API_KEY', '').strip() or api_key
+                   or os.environ.get('BATTERYSCIENTIST_API_KEY') or os.environ.get('OPENAI_API_KEY'),
+        'base_url': os.environ.get(prefix + 'BASE_URL', '').strip() or base_url
+                    or os.environ.get('BATTERYSCIENTIST_BASE_URL') or os.environ.get('OPENAI_BASE_URL'),
+    }
+
+
 def record_usage(workspace, *, source, model, usage=None, phase=None):
     if workspace is None:
         return

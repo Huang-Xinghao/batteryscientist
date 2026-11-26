@@ -1,4 +1,4 @@
-"""Capacity-history forecasting is a separate input protocol from IC2ML curves."""
+"""Capacity-history forecasting is a separate input protocol from tempalte curves."""
 import torch
 from .base import PredictionAdapter
 from data_provider.soh_sequence import sequence_loaders

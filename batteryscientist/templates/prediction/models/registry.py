@@ -1,11 +1,11 @@
 """Register model factories here; adapters declare compatible models."""
 
-from .IC2ML import Model as IC2ML
+from .tempalte import Model as tempalte
 from .CompositionMLP import Model as CompositionMLP
 from .SOHLinear import Model as SOHLinear
 from .SOHBaselines import Persistence, Trend, MLP, TCN
 
-MODELS = {'IC2ML': IC2ML, 'CompositionMLP': CompositionMLP, 'SOHLinear': SOHLinear,
+MODELS = {'tempalte': tempalte, 'CompositionMLP': CompositionMLP, 'SOHLinear': SOHLinear,
           'SOHPersistence': Persistence, 'SOHTrend': Trend, 'SOHMLP': MLP, 'SOHTCN': TCN}
 
 

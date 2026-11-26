@@ -8,6 +8,7 @@ from . import experiment_resources as _experiment_resources
 from .experiments import run as _experiment_run
 from . import laboratory as _laboratory
 from . import wiki as _wiki
+from .wiki import writing as _writing
 from . import figure_references as _figure_references
 from . import image_generation as _image_generation
 from . import image_viewing as _image_viewing
