@@ -13,13 +13,15 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from batteryscientist.tools import BUILTIN_TOOLS, ToolContext, ToolResult, ToolSpec
-from batteryscientist.project_config import load_compute_config, load_execution_config
+from batteryscientist.project_config import load_compute_config, load_execution_config, resolve_battery_root
+from batteryscientist.tools.data_access import registered_data_sources
 from batteryscientist.project_config import AUTO_QUESTION_REQUIREMENT, interaction_instructions
 from .loop import AgentLoop, ArtifactValidationError
 from .context import CONTEXT_MAX_TOKENS
 from batteryscientist.integrations.model import ModelClient, load_env_file
 from batteryscientist.agent.runtime.sessions import RoleSession, now
 from .stages import BY_NODE, WORKFLOW_NODE_NAMES, ROLE_DESCRIPTIONS
+from .state_compat import artifact_references
 from batteryscientist.agent.runtime.execution import dispatch_stage as execute_stage
 from batteryscientist.agent.runtime.execution import StageAssignment
 from batteryscientist.storage import write_json as _write_json
@@ -199,8 +201,7 @@ class CoordinatorAgent(AgentLoop):
         self.research_memory_skill = (repo / "batteryscientist/skills/research-memory/SKILL.md").read_text(encoding="utf-8")
         super().__init__(model_client, workspace=self.project, tools=self._registered_tools(),
                          max_iterations=max_iterations)
-        if (self.project / '电池资源库').is_dir():
-            self.knowledge_roots = (self.project / '电池资源库',)
+        self.knowledge_roots = (resolve_battery_root(self.project),)
 
     def _registered_tools(self):
         """Select exposed capabilities; AgentLoop derives parameter schemas from handlers."""
@@ -248,6 +249,9 @@ class CoordinatorAgent(AgentLoop):
         value["research_goal"] = self.project_goal or value["research_goal"]
         value['mode'] = self.mode
         value['battery_resource_roots'] = [str(path) for path in self.knowledge_roots]
+        value['local_data_sources'] = registered_data_sources(self.knowledge_roots)
+        value['data_access_note'] = ('只读取已登记且exists=true的数据源；列表为空表示没有已登记的本地原始数据。'
+                                     '历史报告中的服务器路径不代表当前容器已挂载，不要反复猜测路径。')
         value['compute_policy'] = load_compute_config(self.project)
         value['execution_policy'] = load_execution_config(self.project)
         memory = read_json(self.project / '.batteryscientist/research-memory.json', {})
@@ -324,9 +328,19 @@ class CoordinatorAgent(AgentLoop):
         if (relative.is_absolute() or not target.is_relative_to(self.project)
                 or any(part.startswith(".") or part in {"audit", "backup", "backups"} for part in relative.parts)
                 or any(part.startswith(".") for part in target.relative_to(self.project).parts)
-                or target.suffix.lower() not in {".md", ".txt", ".json", ".csv", ".tex", ".bib", ".py"}
-                or not target.is_file() or target.stat().st_size > 512000):
+                or target.suffix.lower() not in {".md", ".txt", ".json", ".csv", ".tex", ".bib", ".py"}):
             raise ValueError("Only bounded project text artifacts may be read")
+        if relative.as_posix() == 'project-config.json' and not target.exists():
+            # 配置文件可省略；返回有效默认值，不伪造文件或写入读取凭证。
+            return ToolResult(json.dumps({
+                'path': path, 'exists': False, 'source': 'defaults',
+                'compute': load_compute_config(self.project),
+                'execution': load_execution_config(self.project),
+            }, ensure_ascii=False))
+        if not target.is_file():
+            raise FileNotFoundError('项目文件不存在：' + path)
+        if target.stat().st_size > 512000:
+            raise ValueError('项目文件过大，请使用专用工具读取：' + path)
         content = target.read_bytes()
         text = content.decode('utf-8')
         digest = hashlib.sha256(content).hexdigest()
@@ -385,7 +399,7 @@ class CoordinatorAgent(AgentLoop):
                 or relative.name.startswith(('workflow-', 'experiment-queue', 'project-config'))):
             raise ValueError('不允许修改此路径：' + path)
         saved = read_json(self.project / 'workflow-state.json', {})
-        owners = [n for n, refs in saved.get('artifacts', {}).items()
+        owners = [n for n, refs in artifact_references(saved).items()
                   if any(ref['path'] == path for ref in refs)]
         if owners and node not in owners:
             raise ValueError('node必须是此产物所属的阶段')
@@ -689,6 +703,9 @@ class CoordinatorAgent(AgentLoop):
                     "project_path": str(self.project), "research_goal": self.project_goal,
                     "mode": self.mode, "workflow_state_path": "workflow-state.json",
                     "project_config_path": "project-config.json",
+                    "project_config_exists": (self.project / 'project-config.json').is_file(),
+                    "local_data_sources": registered_data_sources(self.knowledge_roots),
+                    "data_access_note": "仅exists=true的数据源已在本环境可用；空列表表示未登记本地原始数据，历史服务器路径不代表已挂载。",
                 }, ensure_ascii=False)
                 context += f"\n本次用户任务执行预算：最多 {self.max_assignments} 次串行派单；该额度跨本次所有模型响应计算，并非每次只允许一个阶段。"
                 if recovered_results:

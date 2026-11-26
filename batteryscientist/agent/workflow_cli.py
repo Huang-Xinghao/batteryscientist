@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from .loop import PhaseAgent
 from .workflow import WorkflowConfig, WorkflowRunner, WorkflowState
+from .state_compat import artifact_references
 from .stages import BY_NODE, NEXT_NODE, WORKFLOW_NODE_NAMES
 from batteryscientist.storage import write_json as _write_json
 from batteryscientist.storage import read_json_or_default as read_json
@@ -206,7 +207,7 @@ def execute_stage(project: Path, node: str, instruction: str, *, role: str, proj
         from batteryscientist.project_config import resolve_mode
 
         saved_review = read_json(project / 'workflow-state.json', {})
-        watched = {ref['path'] for refs in saved_review.get('artifacts', {}).values() for ref in refs}
+        watched = {ref['path'] for refs in artifact_references(saved_review).values() for ref in refs}
         checkpoint = saved_review.get('expert_checkpoint') or {}
         watched.update(checkpoint.get('files', [checkpoint['report']] if checkpoint.get('report') else []))
 
@@ -290,7 +291,7 @@ def refresh_revision_checkpoint(project, node, project_goal=None, *, files=()):
     if not (node == 'refine' or checkpoint.get('node') == node or was_approved or supersedes_pending):
         return False
     prior = (checkpoint.get('files', [checkpoint['report']]) if checkpoint.get('node') == node
-             else [ref['path'] for ref in saved.get('artifacts', {}).get(node, [])])
+             else [ref['path'] for ref in artifact_references(saved).get(node, [])])
     files = list(dict.fromkeys([*prior, *files]))
     if not files:
         return False

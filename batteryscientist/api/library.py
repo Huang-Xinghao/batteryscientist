@@ -15,8 +15,8 @@ from .schemas import (
     LibraryIndexView,
     ParadigmGraphView,
 )
-from .store import REPO
 from batteryscientist.tools.wiki import resolve_wiki_root
+from batteryscientist.project_config import resolve_battery_root
 from batteryscientist.tools.wiki.storage import corpus_roots, entity_paths, resolve_legacy_path
 
 router = APIRouter(prefix="/api/libraries", tags=["libraries"])
@@ -28,7 +28,7 @@ ASSETS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf"}
 def library_root(library: Library):
     if library == "paradigms":
         return resolve_wiki_root()
-    return Path(os.environ.get("BATTERYSCIENTIST_BATTERY_ROOT", REPO / "电池资源库")).expanduser().resolve()
+    return resolve_battery_root()
 
 
 def document(path, relative):
