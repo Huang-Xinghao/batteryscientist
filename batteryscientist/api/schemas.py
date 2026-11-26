@@ -1,8 +1,10 @@
 """Public response contracts, independent from the evolving workflow internals."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from batteryscientist.proposal_review import CanvasDraft
 
 
 class NodeView(BaseModel):
@@ -96,3 +98,231 @@ class ProjectView(BaseModel):
     checkpoint_token: str
     pending_questions: list[QuestionView] = Field(default_factory=list)
     agents: list[AgentView] = Field(default_factory=list)
+
+
+# --- Responses of the remaining JSON endpoints --------------------------------
+# Field sets mirror exactly what the handlers return, so declaring them changes
+# no payload; the OpenAPI schema (and the generated web types) now covers them.
+
+
+class RunAccepted(BaseModel):
+    id: str
+    status: str
+
+
+class MessageBusy(BaseModel):
+    """A message sent while a run is active is not executed."""
+
+    intent: Literal["status"]
+    reply: str
+    accepted: bool
+    run_id: str
+    status: str
+    progress: dict[str, Any]
+    pending_questions: list[QuestionView] = Field(default_factory=list)
+
+
+class AnswerAccepted(BaseModel):
+    status: str
+    question_id: str
+    task_id: str
+
+
+class StopAccepted(BaseModel):
+    status: str
+
+
+class ProjectFileView(BaseModel):
+    path: str
+    size: int
+    modified: float
+
+
+class FileListView(BaseModel):
+    files: list[ProjectFileView]
+    truncated: bool
+
+
+class FileContentView(BaseModel):
+    kind: Literal["text", "binary"]
+    path: str
+    size: int | None = None
+    content: str | None = None
+    sha256: str | None = None
+    editable: bool | None = None
+
+
+class LogView(BaseModel):
+    content: str
+
+
+class ActivityEventView(BaseModel):
+    id: int
+    project_id: str
+    run_id: str | None = None
+    kind: str
+    data: dict[str, Any]
+    created_at: str
+
+
+class ActivityPageView(BaseModel):
+    events: list[ActivityEventView]
+    has_more: bool
+
+
+class SessionView(BaseModel):
+    enabled: bool
+    authenticated: bool
+
+
+class AuthResult(BaseModel):
+    authenticated: bool
+
+
+class LibraryEntryView(BaseModel):
+    path: str
+    title: str
+    category: str
+    excerpt: str
+    modified: float
+
+
+class LibraryCategoryView(BaseModel):
+    id: str
+    count: int
+
+
+class LibraryIndexView(BaseModel):
+    available: bool
+    items: list[LibraryEntryView]
+    categories: list[LibraryCategoryView]
+    total: int
+    matched: int
+    truncated: bool
+
+
+class LibraryDocumentView(LibraryEntryView):
+    content: str
+
+
+class GraphNodeView(LibraryEntryView):
+    id: str
+    tags: list[str]
+
+
+class GraphEdgeView(BaseModel):
+    source: str
+    target: str
+    type: str
+    evidence: str
+
+
+class ParadigmGraphView(BaseModel):
+    available: bool
+    nodes: list[GraphNodeView]
+    edges: list[GraphEdgeView]
+    truncated: bool
+
+
+class LibraryFigureView(BaseModel):
+    id: str
+    image_path: str
+    paper_id: str
+    paper_title: str
+    paper_path: str | None = None
+    label: str
+    page: int | None = None
+    caption: str
+
+
+class LibraryFiguresView(BaseModel):
+    available: bool
+    items: list[LibraryFigureView]
+    total: int
+    truncated: bool
+
+
+class PendingReviewView(BaseModel):
+    """An unfinished proposal-review draft that blocks approving the proposal."""
+
+    changes: int
+    editedSections: int
+    hasFeedback: bool
+    hasRevision: bool
+    unreadable: bool
+
+
+class ProposalOverviewView(BaseModel):
+    sha256: str
+    diagram: str
+    input: str
+    architecture: str
+    output: str
+    pendingReview: PendingReviewView | None = None
+
+
+class ReviewArchiveView(BaseModel):
+    archived: list[str]
+
+
+class ReviewImpactView(BaseModel):
+    kind: Literal["direct", "related"]
+    title: str
+    detail: str
+    sectionIds: list[str]
+
+
+class ReviewQuestionView(BaseModel):
+    id: str
+    question: str
+    sectionIds: list[str]
+
+
+class RevisionDiffView(BaseModel):
+    id: str
+    title: str
+    beforeSummary: str
+    afterSummary: str
+    detailChanged: bool
+
+
+class RevisionView(BaseModel):
+    # Written together by api/proposal_revision.py; only approval fields come later.
+    id: str
+    summary: str
+    impacts: list[ReviewImpactView]
+    questions: list[ReviewQuestionView]
+    diff: list[RevisionDiffView]
+    createdAt: str
+    approvedAt: str | None = None
+    formalHash: str | None = None
+    frozenPath: str | None = None
+    synced: bool
+    approved: bool
+
+
+class RevisionProgressView(BaseModel):
+    stage: str | None = None
+    receivedChars: int = 0
+    updatedAt: str
+
+
+class CanvasOperationView(BaseModel):
+    id: str
+    status: str
+    error: str | None = None
+    createdAt: str
+    finishedAt: str | None = None
+    action: str
+    progress: RevisionProgressView | None = None
+
+
+class CanvasView(BaseModel):
+    operation: CanvasOperationView | None = None
+    sha256: str
+    sourceHash: str
+    draft: CanvasDraft | None = None
+    revision: RevisionView | None = None
+    canApprove: bool
+    canApply: bool = False
+    context: Literal["checkpoint", "auto", "historical", "unavailable"]

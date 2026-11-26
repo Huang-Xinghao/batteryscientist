@@ -421,7 +421,10 @@ class PhaseAgent(AgentLoop):
         self._model_connection = role_connection(model_role, **self._model_connection_defaults)
         self.model = model_client or ModelClient(selected_model, **self._model_connection, timeout=timeout)
         self.skills_root = repo_root / "batteryscientist" / "skills"
-        self.knowledge_root = Path(knowledge_root).resolve() if knowledge_root else None
+        from batteryscientist.project_config import resolve_battery_root
+        self.knowledge_root = (resolve_battery_root(self.project)
+                               if knowledge_root == self.DEFAULT_BATTERY_KNOWLEDGE_ROOT
+                               else Path(knowledge_root).resolve() if knowledge_root else None)
         self.phase = phase
         if context_max_tokens < 1000:
             raise ValueError("context_max_tokens must be at least 1000")
@@ -576,7 +579,15 @@ class PhaseAgent(AgentLoop):
     def _system_prompt(self) -> str:
         from batteryscientist.project_config import interaction_instructions
 
-        parts = [f"你是研究项目的执行 Agent。当前阶段：{self.phase}。"]
+        from batteryscientist.tools.data_access import registered_data_sources
+        data_context = json.dumps({
+            'battery_resource_roots': [str(path) for path in self.knowledge_roots],
+            'local_data_sources': registered_data_sources(self.knowledge_roots),
+        }, ensure_ascii=False)
+        parts = [f"你是研究项目的执行 Agent。当前阶段：{self.phase}。",
+                 "当前环境资源与数据登记：" + data_context,
+                 "依据当前登记的数据来源及其 exists 状态判断可用性；历史报告中的绝对路径仅作参考，"
+                 "需要原始数据时先确认当前挂载，尚未核验的内容在交付中说明。"]
         if self.role:
             parts.append(f"当前角色：{self.role}。{ROLE_DESCRIPTIONS[self.role]}")
         parts.append("根据本次派单，遵循当前 Skill 和相关指南，读取材料、执行任务并交付结果。")

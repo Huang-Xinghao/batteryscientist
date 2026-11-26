@@ -16,6 +16,7 @@ from typing import Any, Callable, Iterable, Literal
 
 from .loop import ArtifactValidationError, PhaseAgent
 from .stages import NEXT_NODE
+from .state_compat import artifact_references
 from batteryscientist.tools.experiments.plan import read_plan_blocks, write_experiment_tracker
 from batteryscientist.tools.paper_compile import compile_pdf
 
@@ -54,6 +55,34 @@ class WorkflowState:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> WorkflowState:
         value = dict(value)
+        artifacts = value.get('artifacts', {})
+        if any(isinstance(refs, str) for refs in artifacts.values()):
+            results = dict(value.get('node_results', {}))
+            for node, refs in artifacts.items():
+                if isinstance(refs, str):
+                    metadata = dict(results.get(node, {}))
+                    # 正文保留为历史信息，不能塞进新版的文件路径字段。
+                    if metadata.get('artifact') != refs:
+                        metadata.setdefault('legacy_artifact', refs)
+                    results[node] = metadata
+            value['node_results'] = results
+        value['artifacts'] = artifact_references(value)
+        # 旧项目用 task_prompt 保存总目标；读取时迁移，写回只使用新字段。
+        # 已有非空新目标优先，不能因恢复旧快照而丢失研究背景或覆盖新目标。
+        legacy_goal = value.pop('task_prompt', '')
+        if not value.get('project_goal') and legacy_goal:
+            value['project_goal'] = legacy_goal
+        # 旧版阶段指令和实验扩展标记只作为历史信息保留，不构成新版执行授权。
+        legacy_metadata = {}
+        for key in ('node_instructions', 'experiment_expansion_requested', 'experiment_expansion_count'):
+            if key in value:
+                legacy_metadata[key] = value.pop(key)
+        if legacy_metadata:
+            value['history'] = [*value.get('history', []), {
+                'event': 'legacy_state_metadata',
+                'node': value.get('current_node', 'literature'),
+                'metadata': legacy_metadata,
+            }]
         for key in ('experiment_completed_receipts', 'experiment_repair_count', 'experiment_feedback'):
             value.pop(key, None)
         return cls(**value)

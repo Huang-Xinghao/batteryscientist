@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from batteryscientist.proposal_review import CanvasDraft, review_status
 
+from .schemas import CanvasView, ProposalOverviewView, ReviewArchiveView
 from .store import connection, event, rows, now
 
 router = APIRouter(prefix="/api/projects")
@@ -17,14 +18,52 @@ PROPOSAL = "refine-logs/FINAL_PROPOSAL.md"
 CANVAS = "IDEA_CANVAS.json"
 
 
-@router.get('/{project_id}/proposal-overview')
+@router.get('/{project_id}/proposal-overview', response_model=ProposalOverviewView)
 def read_proposal_overview(project_id: str):
     from batteryscientist.proposal_view import model_overview
-    _, proposal, _ = paths(project_id)
+    from batteryscientist.proposal_review import pending_proposal_review
+    project, proposal, _ = paths(project_id)
     if not proposal.is_file():
         raise HTTPException(404, '尚无模型方案')
     content = proposal.read_bytes()
-    return {**model_overview(content.decode('utf-8')), 'sha256': hashlib.sha256(content).hexdigest()}
+    try:
+        pending = pending_proposal_review(Path(project['path']))
+    except (ValueError, OSError):
+        pending = {"changes": 0, "editedSections": 0, "hasFeedback": False,
+                   "hasRevision": False, "unreadable": True}
+    return {**model_overview(content.decode('utf-8')), 'sha256': hashlib.sha256(content).hexdigest(),
+            'pendingReview': pending}
+
+
+@router.post('/{project_id}/idea-canvas/archive', response_model=ReviewArchiveView)
+def archive_review(project_id: str):
+    """Set an unfinished proposal-review draft aside so the formal proposal can be approved.
+
+    The review page that edited these drafts is no longer shown, so a leftover draft would
+    otherwise block the checkpoint with no way forward. Files move to refine-logs/archive/.
+    """
+    import fcntl
+    from batteryscientist.proposal_review import archive_proposal_review
+
+    project, _, _ = paths(project_id)
+    root = Path(project['path'])
+    with (root / '.web-run.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise HTTPException(409, '运行期间不能归档方案审阅草稿')
+        with connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute("SELECT 1 FROM runs WHERE project_id=? AND status IN ('queued','running','stopping')",
+                          (project_id,)).fetchone():
+                raise HTTPException(409, '运行期间不能归档方案审阅草稿')
+            try:
+                archived = archive_proposal_review(root)
+            except (ValueError, OSError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+            db.execute('INSERT INTO events(project_id,kind,data,created_at) VALUES(?,?,?,?)',
+                       (project_id, 'proposal_review_archived', json.dumps({'archived': archived}), now()))
+    return {'archived': archived}
 
 
 class CanvasSave(BaseModel):
@@ -36,7 +75,7 @@ class CanvasApply(BaseModel):
     sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
 
 
-@router.post('/{project_id}/idea-canvas/apply')
+@router.post('/{project_id}/idea-canvas/apply', response_model=CanvasView)
 def apply_canvas(project_id: str, body: CanvasApply):
     """Adopt a reviewed automatic-mode design without starting downstream work."""
     import fcntl
@@ -77,7 +116,7 @@ def paths(project_id):
     return project, proposal, target
 
 
-@router.get("/{project_id}/idea-canvas")
+@router.get("/{project_id}/idea-canvas", response_model=CanvasView)
 def read_canvas(project_id: str):
     from .app import digest
 
@@ -114,7 +153,7 @@ def read_canvas(project_id: str):
     }
 
 
-@router.put("/{project_id}/idea-canvas")
+@router.put("/{project_id}/idea-canvas", response_model=CanvasView)
 def save_canvas(project_id: str, body: CanvasSave):
     import fcntl
     from .app import digest

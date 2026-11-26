@@ -1,6 +1,7 @@
 """Project collaboration mode and user-owned compute and execution policies."""
 import json
 import math
+import os
 from pathlib import Path
 
 from batteryscientist.storage import read_json
@@ -21,6 +22,16 @@ def interaction_instructions(mode):
 
 
 MAX_JOB_SECONDS = 86400
+
+
+def resolve_battery_root(project=None):
+    """Use the same deployed resource library in the API and agent processes."""
+    configured = os.environ.get('BATTERYSCIENTIST_BATTERY_ROOT')
+    if configured:
+        return Path(configured).expanduser().resolve()
+    if project is not None and (Path(project) / '电池资源库').is_dir():
+        return (Path(project) / '电池资源库').resolve()
+    return Path(__file__).resolve().parents[1] / '电池资源库'
 
 
 def resolve_mode(project, requested=None, *, default='auto'):

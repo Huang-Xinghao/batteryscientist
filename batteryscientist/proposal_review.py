@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from batteryscientist.storage import atomic_bytes
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -253,18 +254,48 @@ def require_candidate(root: Path, expected_sha: str):
     return draft, record
 
 
-def require_resolved_proposal_review(root: Path):
-    """Require pending canvas edits to be resolved before approval or revision."""
+def pending_proposal_review(root: Path) -> dict | None:
+    """Unresolved canvas edits that block approving the formal proposal, if any."""
     path = owned_path(root, CANVAS)
     if not path.exists():
-        return
-    draft = CanvasDraft.model_validate_json(path.read_bytes())
+        return None
     record = load_record(root)
+    try:
+        draft = CanvasDraft.model_validate_json(path.read_bytes())
+    except ValueError:
+        # An unreadable draft still blocks approval; it can only be archived.
+        return {"changes": 0, "editedSections": 0, "hasFeedback": False,
+                "hasRevision": bool(record), "unreadable": True}
     if record and record.get("approvedAt") and record.get("draftHash") == draft_hash(draft):
         if record.get("formalHash") == sha(owned_path(root, PROPOSAL).read_bytes()):
-            return
-    if record or draft.changes or draft.review and (draft.review.feedback.strip() or any(s.edited for s in draft.review.sections)):
+            return None
+    feedback = bool(draft.review and draft.review.feedback.strip())
+    edited = sum(1 for section in (draft.review.sections if draft.review else []) if section.edited)
+    if not (record or draft.changes or feedback or edited):
+        return None
+    return {"changes": len(draft.changes), "editedSections": edited, "hasFeedback": feedback,
+            "hasRevision": bool(record), "unreadable": False}
+
+
+def require_resolved_proposal_review(root: Path):
+    """Require pending canvas edits to be resolved before approval or revision."""
+    if pending_proposal_review(root):
         raise ValueError("存在方案审阅草稿，请在方案审阅中统一修订、复审并批准")
+
+
+def archive_proposal_review(root: Path) -> list[str]:
+    """Move the canvas draft and revision record aside; nothing is deleted."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    folder = owned_path(root, f"refine-logs/archive/idea-review-{stamp}")
+    moved = []
+    for name in (CANVAS, RECORD):
+        source = owned_path(root, name)
+        if source.exists():
+            folder.mkdir(parents=True, exist_ok=True)
+            destination = folder / Path(name).name
+            source.replace(destination)
+            moved.append(destination.relative_to(root.resolve()).as_posix())
+    return moved
 
 
 def render_proposal(draft: CanvasDraft) -> str:
