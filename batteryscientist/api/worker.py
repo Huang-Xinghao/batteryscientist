@@ -193,9 +193,11 @@ def _execute(run_id):
                                              execution_guard=lambda node: check_runtime() if node == "experiment_bridge" else None,
                                              **options)
     output = data_root() / "runs" / run_id / "result.json"
+    result = {"status": state.status, "error": state.error}
+    if getattr(state, 'outcome', None) is not None:
+        result['outcome'] = state.outcome
     output.write_text(
-        json.dumps({"status": state.status, "error": state.error,
-                    "outcome": getattr(state, 'outcome', None)}), encoding="utf-8"
+        json.dumps(result), encoding="utf-8"
     )
 
 
