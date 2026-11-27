@@ -52,6 +52,53 @@ def make_project(client, projects):
     return project["id"]
 
 
+def test_confirmed_goal_is_visible_before_first_research_stage(client):
+    test_client, _ = client
+    project = test_client.post('/api/projects', json={'name': '目标确认'}).json()
+    from pathlib import Path
+    root = Path(project['path'])
+    session = root / '.batteryscientist/role-sessions/main.json'
+    session.parent.mkdir(parents=True, exist_ok=True)
+    session.write_text(json.dumps({'project_goal': '研究跨电芯泛化'}))
+    response = test_client.get(f"/api/projects/{project['id']}")
+    assert response.status_code == 200
+    assert response.json()['state']['project_goal'] == '研究跨电芯泛化'
+    assert response.json()['status'] == 'idle'
+    assert not (root / 'workflow-state.json').exists()
+
+
+def test_message_history_survives_run_limit_and_paginates_without_duplicates(client):
+    test_client, _ = client
+    project = test_client.post('/api/projects', json={'name': '消息历史'}).json()
+    from batteryscientist.api.store import connection
+    with connection() as db:
+        for index in range(35):
+            db.execute('INSERT INTO runs(id,project_id,status,options,created_at) VALUES(?,?,?,?,?)',
+                       (f'message-{index:02}', project['id'], 'completed',
+                        json.dumps({'action': 'coordinate', 'message_prompt': f'用户消息 {index}'}),
+                        '2026-11-27T00:00:00+00:00'))
+    detail = test_client.get(f"/api/projects/{project['id']}").json()
+    assert len(detail['runs']) == 30
+    url = f"/api/projects/{project['id']}/messages"
+    all_messages = test_client.get(url).json()['messages']
+    assert len(all_messages) == 35
+    assert all_messages[0]['content'] == '用户消息 0'
+    seen = []
+    params = {'limit': 10}
+    while True:
+        response = test_client.get(url, params=params)
+        assert response.status_code == 200
+        page = response.json()
+        seen.extend(message['id'] for message in page['messages'])
+        if not page['next_cursor']:
+            break
+        params['before'] = page['next_cursor']
+    assert len(seen) == len(set(seen)) == 35
+    other = test_client.post('/api/projects', json={'name': '另一个项目'}).json()
+    assert test_client.get(f"/api/projects/{other['id']}/messages").json()['messages'] == []
+    assert test_client.get(url, params={'before': 'missing'}).status_code == 404
+
+
 def test_project_file_endpoints_keep_their_fields(client):
     test_client, projects = client
     project_id = make_project(test_client, projects)

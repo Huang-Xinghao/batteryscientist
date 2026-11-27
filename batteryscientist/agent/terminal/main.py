@@ -206,7 +206,7 @@ def run_turn(folder):
                     if approved.expert_checkpoint['node'] == 'refine' and stop_after == 'experiment_plan':
                         options['stage_task'] = {'node': 'experiment_plan', 'role': 'experiment',
                             'instruction': '依据已批准的 refine-logs/FINAL_PROPOSAL.md 制定实验计划，'
-                                           '落实已确认配置和验收标准，交付后停止，不启动训练。'}
+                                           }
                     prompt += ('\n终端已通过正式审批入口核验并批准当前检查点。'
                                f'请从 {approved.current_node} 继续用户已授权的任务；'
                                '历史对话中“检查点未解除”的描述已经过时。')

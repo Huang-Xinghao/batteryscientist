@@ -388,7 +388,7 @@ def run_coordinated_workflow(project: Path, prompt: str = "", *, start_node=None
     task = None
     if node == stop_after:
         task = {"node": node, "role": BY_NODE[node].role, "full_stage": True,
-                "instruction": (f"完成 {node} 阶段并交付该阶段产物，验收后停止。"
+                "instruction": (f"完成 {node} 阶段并交付该阶段产物。"
                                 if saved is None or continue_run or resume_run else prompt)}
     agent = CoordinatorAgent(project, model=model, worker_max_iterations=max_iterations,
                              timeout=timeout, mode=mode, on_event=on_event,

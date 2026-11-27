@@ -30,6 +30,7 @@ from .schemas import (
     HealthView,
     LogView,
     MessageBusy,
+    MessageHistoryView,
     ProjectView,
     QuestionAnswer,
     QuestionView,
@@ -379,6 +380,11 @@ def scan_terminal_projects() -> frozenset[str]:
 def detail(project, terminal_paths=None):
     from batteryscientist.agent.runtime.questions import UserQuestions
     state = read_json(Path(project["path"]) / "workflow-state.json", {})
+    if not state.get('project_goal'):
+        # The coordinator can confirm a goal before the first workflow stage
+        # creates workflow-state.json. Expose it without starting a workflow.
+        main = read_json(Path(project['path']) / '.batteryscientist/role-sessions/main.json', {})
+        state['project_goal'] = main.get('project_goal') or ''
     runs = rows(
         "SELECT * FROM runs WHERE project_id=? ORDER BY created_at DESC LIMIT 30",
         (project["id"],),
@@ -524,6 +530,39 @@ def send_message(project_id: str, body: MessageCreate):
     event(project_id, 'conversation_turn', {'prompt': body.prompt, 'reply': '已交给主控处理。',
           'intent': 'coordinate', 'run_id': result['id']})
     return JSONResponse(result, status_code=202)
+
+
+@app.get('/api/projects/{project_id}/messages', response_model=MessageHistoryView)
+def message_history(project_id: str, before: str | None = None,
+                    limit: int = Query(default=100, ge=1, le=500)):
+    """User messages come from durable runs, independently of actor/event pages."""
+    project_record(project_id)
+    values = [project_id]
+    clause = ''
+    if before:
+        cursor = rows('SELECT created_at,id FROM runs WHERE project_id=? AND id=?',
+                      (project_id, before))
+        if not cursor:
+            raise HTTPException(404, '消息游标不存在')
+        clause = ' AND (created_at,id)<(?,?)'
+        values.extend([cursor[0]['created_at'], before])
+    records = rows(
+        "SELECT id,created_at,options FROM runs WHERE project_id=? "
+        "AND (json_extract(options,'$.action')='review' "
+        "OR length(trim(COALESCE(json_extract(options,'$.message_prompt'), "
+        "json_extract(options,'$.prompt'),'')))>0)" + clause +
+        ' ORDER BY created_at DESC,id DESC LIMIT ?', (*values, limit + 1))
+    page = records[:limit]
+    messages = []
+    for record in reversed(page):
+        options = json.loads(record['options'])
+        review = options.get('action') == 'review'
+        messages.append(dict(id=record['id'], created_at=record['created_at'],
+            content=(options.get('answer') or '确认当前产物，继续研究。') if review else
+                    options.get('message_prompt') or options.get('prompt', ''),
+            label='审阅反馈' if review else '研究指令'))
+    return dict(messages=messages,
+                next_cursor=page[-1]['id'] if len(records) > limit else None)
 
 
 def create_run(project_id: str, body: RunCreate, *, message_prompt=None):

@@ -21,15 +21,13 @@ from batteryscientist.integrations.model import record_usage
 from batteryscientist.storage import atomic_bytes
 
 
-ReviewKind = Literal["idea", "code", "paper"]
+ReviewKind = Literal["code", "paper"]
 RUBRICS = {
-    "idea": "Assess novelty against supplied literature, method soundness, feasibility, and falsifiable experimental claims.",
     "code": "Check implementation against the stated method, correctness, data leakage, evaluation fairness, and test evidence.",
     "paper": "Check claims against experimental evidence, methodological clarity, consistency of text/tables/figures, citations, and limitations.",
 }
 
 DEFAULT_REPORTS = {
-    "idea": Path("idea-stage/review.md"),
     "code": Path("refine-logs/CODE_REVIEW.md"),
     "paper": Path("paper/review.md"),
 }
@@ -118,7 +116,7 @@ class ReviewRunner:
 
     def run(self, request: ReviewRequest) -> ReviewResult:
         from batteryscientist.integrations.progress import OperationProgress
-        role = {'idea': 'idea_generator', 'code': 'experiment', 'paper': 'paper_writer'}.get(request.kind, 'main')
+        role = {'code': 'experiment', 'paper': 'paper_writer'}.get(request.kind, 'main')
         progress = OperationProgress(self.workspace, 'review', request.output or DEFAULT_REPORTS.get(request.kind, 'review'),
                                      role=role, on_progress=self.on_progress)
         with progress.running():

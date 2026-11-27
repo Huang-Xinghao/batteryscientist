@@ -15,7 +15,7 @@ description: 根据 FINAL_PROPOSAL.md 分别规划电池数据集分析与方法
 - `refine-logs/FINAL_PROPOSAL.md`
 - `data-search/DATA_REPORT.md`。
 
-`FINAL_PROPOSAL.md` 是方法定义的来源，实验规划期间不得改写方案或已批准的冻结副本。规划产出完整实验计划，进度 tracker 由运行器生成，不手动编写或维护。
+`FINAL_PROPOSAL.md` 是方法定义的来源，沿用提案的方法定义；
 
 提炼：
 

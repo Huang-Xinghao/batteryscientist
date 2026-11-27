@@ -1,23 +1,8 @@
-"""Independent reviews exposed to idea and experiment agents."""
+"""Independent code review exposed to experiment agents."""
 
 from batteryscientist.integrations.review import DEFAULT_REPORTS, ReviewRequest, ReviewRunner
 
 from .core import ToolContext, ToolResult, tool
-
-
-IDEA_REVIEW_INSTRUCTIONS = """Evaluate the candidate ideas before a final idea is selected.
-For each candidate, assess research value, novelty relative to the supplied literature,
-method soundness, dataset compatibility, feasibility, and falsifiability. Cite evidence
-for concerns and distinguish confirmed problems from missing evidence. Compare the
-candidates, recommend priorities with reasons, and identify necessary revisions.
-For method-design tasks, judge whether each candidate proposes a concrete solution
-to a specific bottleneck: identify the changed mechanism, the closest prior method,
-and a minimal comparison that could falsify its benefit. Model rankings or a larger
-benchmark matrix do not replace a proposed solution. Do not default to a benchmark
-because it is cheaper or because novelty remains uncertain; request focused method
-revisions instead. Respect explicit user requests for benchmarking or reproduction.
-Do not select or write the final IDEA_REPORT.md; the idea creator makes the final decision.
-"""
 
 
 CODE_REVIEW_INSTRUCTIONS = """Review the experiment implementation against FINAL_PROPOSAL.md
@@ -74,14 +59,3 @@ def review_code(ctx: ToolContext, files: list[str], instructions: str = "") -> T
     if ctx.resolve("data-search/DATA_REPORT.md").is_file():
         paths.append("data-search/DATA_REPORT.md")
     return _review(ctx, "code", paths, CODE_REVIEW_INSTRUCTIONS + "\n" + instructions)
-
-
-@tool()
-def review_idea(ctx: ToolContext, instructions: str = "") -> ToolResult:
-    """Independently review candidates against literature and the data report.
-    Save idea-stage/review.md and return its full text for the agent's decision.
-    Does not write candidates or the final idea report. Completion is not approval.
-    """
-    return _review(ctx, "idea", ["idea-stage/IDEA_CANDIDATES.md",
-        "literature/RESEARCH_REPORT.md", "data-search/DATA_REPORT.md"],
-        IDEA_REVIEW_INSTRUCTIONS + "\n" + instructions)

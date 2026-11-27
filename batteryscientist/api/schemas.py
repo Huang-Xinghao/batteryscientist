@@ -49,6 +49,18 @@ class WorkflowView(BaseModel):
     paper_status: str | None = None
 
 
+class UserMessageView(BaseModel):
+    id: str
+    created_at: str
+    content: str
+    label: str
+
+
+class MessageHistoryView(BaseModel):
+    messages: list[UserMessageView]
+    next_cursor: str | None = None
+
+
 class RunView(BaseModel):
     id: str
     status: str

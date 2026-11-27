@@ -15,7 +15,7 @@ PHASE_TOOL_NAMES: dict[str, frozenset[str]] = {
                               "search_wiki", "read_wiki"}),
     "literature": frozenset({"find", "read", "grep", "write", "skill", "skill_resource_read", "sleep",
                               "discover_local_papers", "read_local_paper", "read_paper_pages", "search_wiki", "read_wiki"}),
-    "ideas": frozenset({"find", "read", "grep", "write", "edit", "skill", "skill_resource_read", "review_idea",
+    "ideas": frozenset({"find", "read", "grep", "write", "edit", "skill", "skill_resource_read",
                          "discover_local_papers", "read_local_paper", "read_paper_pages",
                          "battery_resources", "search_wiki", "read_wiki"}),
     "research_refine": frozenset({"find", "read", "grep", "write", "edit", "bash", "skill", "skill_resource_read",

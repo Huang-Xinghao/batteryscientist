@@ -98,6 +98,74 @@ def test_discussion_and_document_outcomes(tmp_path):
     agent._complete_research()
 
 
+@pytest.mark.parametrize('query', ['你是谁？', '现在进度如何？'])
+def test_plain_reply_finishes_without_scope_registration(tmp_path, query):
+    events = []
+    agent = make_agent(tmp_path, on_event=events.append)
+    agent._request_model = AsyncMock(return_value=ModelResponse(content='我是 BatteryScientist。'))
+    result = agent.go(query)
+    assert result.outcome == 'answered'
+    assert agent._request_model.await_count == 1
+    assert not any(event['kind'] == 'validation_failed' for event in events)
+    assert not (tmp_path / 'workflow-state.json').exists()
+
+
+def test_read_and_edit_automatically_record_document_outcome(tmp_path):
+    (tmp_path / 'plan.md').write_text('# Old plan')
+    agent = make_agent(tmp_path)
+    agent._request_model = AsyncMock(side_effect=[
+        ModelResponse(tool_calls=(ToolCall('read', 'read_project_file', {'path': 'plan.md'}),)),
+        ModelResponse(tool_calls=(ToolCall('edit', 'edit_project_markdown', {
+            'node': 'paper_plan', 'path': 'plan.md',
+            'old_text': '# Old plan', 'new_text': '# New plan'}),)),
+        ModelResponse(content='已更新。'),
+    ])
+    result = agent.go('修改计划标题')
+    assert result.outcome == 'document_updated'
+    assert (tmp_path / 'plan.md').read_text() == '# New plan'
+
+
+def test_read_only_query_needs_no_scope(tmp_path):
+    (tmp_path / 'plan.md').write_text('# Research plan')
+    agent = make_agent(tmp_path)
+    agent._request_model = AsyncMock(side_effect=[
+        ModelResponse(tool_calls=(ToolCall('read', 'read_project_file', {'path': 'plan.md'}),)),
+        ModelResponse(content='这是当前研究计划。'),
+    ])
+    assert agent.go('看看计划标题是什么').outcome == 'answered'
+
+
+def test_dispatch_without_scope_cannot_be_downgraded_to_discussion(tmp_path):
+    agent = make_agent(tmp_path)
+    worker = SimpleNamespace(status='completed', error=None, task_id='task-1',
+                             final='Done', files=['report.md'])
+    with patch('batteryscientist.agent.coordinator.execute_stage', return_value=worker):
+        agent._delegate(None, {'node': 'experiment_bridge', 'role': 'experiment',
+                               'instruction': 'Verify results', 'full_stage': False})
+    assert agent.turn.request_kind == 'execution'
+    assert agent.turn.required_nodes == ['experiment_bridge']
+    with pytest.raises(ValueError):
+        agent._set_request_scope(None, 'discussion')
+    agent._complete_research()
+
+
+@pytest.mark.parametrize('receipt_status', ['completed', 'skipped'])
+def test_wiki_dispatch_tracks_success_and_unchanged_sources(tmp_path, receipt_status):
+    (tmp_path / 'paper').mkdir()
+    (tmp_path / 'paper/main.pdf').write_bytes(b'%PDF-1.4')
+    agent = make_agent(tmp_path)
+    agent.turn.archive_due = True
+    worker = SimpleNamespace(status='completed', error=None,
+                             wiki_result={'status': receipt_status})
+    with patch('batteryscientist.agent.coordinator.execute_stage', return_value=worker):
+        result = agent._curate_wiki(None, project_evidence=True)
+    assert not result.is_error
+    assert agent.turn.request_kind == 'execution'
+    assert agent.turn.required_nodes == ['wiki']
+    assert not agent.turn.archive_due
+    agent._complete_research()
+
+
 def test_premature_summary_resumes_dispatch_and_saves_receipts(tmp_path):
     agent = make_agent(tmp_path, max_assignments=3)
     responses = [

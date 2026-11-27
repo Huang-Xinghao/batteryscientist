@@ -17,7 +17,8 @@ description: 在文献调研与研究构思之间，根据研究背景选择数�
 - 统一用 `battery_resources(action="search", query="数据集名称或任务", resource_types=["dataset"])` 获取说明和登记的数据路径；query 留空可浏览目录，按 next_offset 翻页。
 - 用 `battery_resources(action="read", resource_id="搜索返回的ID")` 阅读说明；长文按 next_offset 继续读取。
 - 用 `battery_resources(action="inspect", path="数据文件绝对路径")` 查看 JSON/CSV/PKL 的结构与少量样本；目录和配套文本可用 `ls` / `find` / `read` / `grep` 探索。
-- 自定义脚本用于补充必要的结构理解和描述性统计
+- 禁止写过多的自定义脚本去处理和验证数据
+- 不在本阶段进行数据集的训练验证集划分，这部分在后续的代码模版中已经写死了不需要你去做
 
 ## 2. Phase 1：根据研究背景选择合适的数据集
 
